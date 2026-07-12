@@ -7,6 +7,8 @@
 # Rust / Tauri build artifacts
 /target/
 src-tauri/target/
+# tauri_build::build() regenerates these schemas each build
+src-tauri/gen/
 
 # web build
 node_modules/

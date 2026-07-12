@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LogRadar",
+  "version": "0.1.0",
+  "identifier": "com.logradar.app",
+  "build": { "frontendDist": "../no-frontend" },
+  "app": { "windows": [], "security": { "csp": null } },
+  "plugins": {}
+}
