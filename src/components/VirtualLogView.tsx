@@ -19,6 +19,7 @@ import {
   type ReactNode,
 } from "react";
 import { getLines } from "../lib/ipc";
+import { JsonInspector } from "./JsonInspector";
 import "./VirtualLogView.css";
 
 export type LogLevel = "ERROR" | "WARN" | "INFO" | "DEBUG" | "FATAL" | "TRACE";
@@ -88,6 +89,29 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Best-effort detect+extract of a JSON object/array in a raw log line, for the
+ *  ▸展开JSON affordance (spec C5). Tries the whole line first (pure-JSON
+ *  structured logs like `{"event":"x"}`); if that fails, tries the substring
+ *  from the first `{`/`[` onward (for prefixed lines like
+ *  `14:22:01 ERROR {"event":"x"}`). Returns the parseable substring if the
+ *  parsed value is a non-null object (object/array — excludes bare
+ *  primitives, which aren't "structured logs"); else null. The returned string
+ *  is what JsonInspector re-parses + renders as a tree. */
+function extractJson(raw: string): string | null {
+  const candidates: string[] = [raw];
+  const braceIdx = raw.search(/[{[]/);
+  if (braceIdx > 0) candidates.push(raw.slice(braceIdx));
+  for (const c of candidates) {
+    try {
+      const data = JSON.parse(c);
+      if (data !== null && typeof data === "object") return c;
+    } catch {
+      /* not JSON — try next candidate */
+    }
+  }
+  return null;
+}
+
 /** Split `text` on the (case-insensitive) `term` and wrap each match in
  * `<mark class="hit">`. Used only for hit lines. */
 function HighlightedMessage({
@@ -144,6 +168,19 @@ export function VirtualLogView({
   // Last visible viewport reported to the parent via `onViewportChange`, so a
   // sub-row scroll (same visible window) doesn't re-fire the callback.
   const lastVp = useRef<{ s: number; e: number }>({ s: -1, e: -1 });
+  // Set of absolute line numbers whose ▸展开JSON affordance is currently
+  // expanded (showing an inline JsonInspector beneath the line). Keyed by
+  // absolute line number so an expansion survives scroll re-renders: a row
+  // unmounts when it leaves the viewport, but `expanded.has(n)` stays true, so
+  // scrolling back re-renders the JsonInspector without losing fold state.
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const toggleJson = (n: number) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
 
   const hitSet = hits ? new Set(hits) : null;
   const pad = Math.max(6, String(Math.max(0, totalLines - 1)).length);
@@ -193,10 +230,21 @@ export function VirtualLogView({
   if (chunk) {
     for (let i = 0; i < chunk.lines.length; i++) {
       const n = chunk.start + i;
-      const { ts, level, message } = parseLine(chunk.lines[i]);
+      const raw = chunk.lines[i];
+      const { ts, level, message } = parseLine(raw);
       const isHit = hitSet?.has(n) ?? false;
       const isJump = jumpToLine != null && jumpToLine === n;
-      const cls = ["ln", isHit ? "hit" : "", isJump ? "jump" : ""]
+      // ▸展开JSON affordance: only on lines whose JSON parses to an object/array.
+      const jsonSrc = extractJson(raw);
+      const isJson = jsonSrc !== null;
+      const isOpen = expanded.has(n);
+      const cls = [
+        "ln",
+        isHit ? "hit" : "",
+        isJump ? "jump" : "",
+        isJson ? "has-json" : "",
+        isOpen ? "ln-expanded" : "",
+      ]
         .filter(Boolean)
         .join(" ");
       rows.push(
@@ -226,6 +274,46 @@ export function VirtualLogView({
             )}
           </span>
           {isJump && <span className="tag">← jump target</span>}
+          {isJson && (
+            <span
+              className="json-toggle"
+              data-testid="json-toggle"
+              role="button"
+              tabIndex={0}
+              aria-expanded={isOpen}
+              aria-label={`${isOpen ? "收起" : "展开"}JSON line ${n}`}
+              onClick={(e) => {
+                // stopPropagation: the row's onClick jumps to the line; the
+                // affordance toggles the inline tree and must not also jump.
+                e.stopPropagation();
+                toggleJson(n);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggleJson(n);
+                }
+              }}
+            >
+              {isOpen ? "▾收起JSON" : "▸展开JSON"}
+            </span>
+          )}
+          {isOpen && jsonSrc != null && (
+            <div
+              className="ln-json"
+              data-line-json={n}
+              // stopPropagation: clicks inside the tree (e.g. on a nested
+              // ▾/▸ twist) must not bubble up to the row's onClick (jump to
+              // line). The tree manages its own fold state independently.
+              onClick={(e) => e.stopPropagation()}
+            >
+              <JsonInspector
+                line={jsonSrc}
+                hits={highlightTerm ? [highlightTerm] : []}
+              />
+            </div>
+          )}
         </div>,
       );
     }

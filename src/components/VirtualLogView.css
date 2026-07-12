@@ -141,3 +141,47 @@ mark.hit {
   margin-left: 8px;
   font-family: var(--font-ui);
 }
+
+/* ── ▸展开JSON affordance (spec C5 — JsonInspector inline expand) ── */
+/* The toggle is a flex child at the end of the row (.ln is display:flex). */
+.ln .json-toggle {
+  flex-shrink: 0;
+  margin-left: 10px;
+  padding: 0 6px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  color: var(--scan);
+  background: var(--scan-soft);
+  border-radius: 3px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+.ln .json-toggle:hover {
+  background: var(--hit-bg);
+}
+/* When expanded, the row becomes the positioning context for the absolutely-
+ * placed .ln-json tree, so the tree overlays the rows beneath without
+ * disturbing the fixed-row-height virtualization math (row height stays
+ * rowHeight — the tree is out of flow). */
+.ln.ln-expanded {
+  position: relative;
+  z-index: 4;
+}
+/* The inline JsonInspector tree, anchored beneath the expanded line. Left
+ * offset aligns it under the message column (past the line-no + ts + level
+ * gutters), per the mockup's "原地内联展开" placement. surface-2 background +
+ * scan left border set it off from the surrounding rows; the JsonInspector's
+ * own .jtree sheet handles the tree's internal styling. */
+.ln .ln-json {
+  position: absolute;
+  top: 100%;
+  left: 120px;
+  right: 0;
+  z-index: 5;
+  border-left: 2px solid var(--scan);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.ln .ln-json .jtree {
+  border-radius: 0 0 3px 3px;
+}

@@ -175,4 +175,102 @@ describe("VirtualLogView", () => {
     expect(first[1]).toBe(0); // start at line 0
     expect(first[2]).toBeLessThan(100); // a window, not the whole file
   });
+
+  // --- Task 5: ▸展开JSON affordance — JsonInspector ↔ VirtualLogView (spec C5) ---
+  // A JSON log line shows a ▸展开JSON toggle; clicking expands JsonInspector
+  // inline beneath the line (indented); clicking again collapses; non-JSON
+  // lines show no affordance.
+
+  it("shows a ▸展开JSON affordance on a JSON line and expands JsonInspector inline on click", async () => {
+    const jsonLine = '{"event":"db_error","code":"ECONNREFUSED"}';
+    mockedGetLines.mockImplementation(() => Promise.resolve([jsonLine]));
+    const { container } = render(
+      <VirtualLogView sessionId="s1" totalLines={1} rowHeight={ROW} />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="0"]')).not.toBeNull(),
+    );
+    const row = container.querySelector('[data-line="0"]') as HTMLElement;
+    // collapsed: the ▸展开JSON affordance is present, no tree yet
+    const toggle = row.querySelector(
+      '[data-testid="json-toggle"]',
+    ) as HTMLElement;
+    expect(toggle).not.toBeNull();
+    expect(toggle.textContent).toContain("▸展开JSON");
+    expect(container.querySelector(".jtree")).toBeNull();
+    // click → JsonInspector tree renders inline beneath the line
+    fireEvent.click(toggle);
+    const tree = await waitFor(() => container.querySelector(".jtree"));
+    expect(tree).not.toBeNull();
+    expect(tree!.textContent).toContain("event");
+    expect(tree!.textContent).toContain("db_error");
+    expect(tree!.textContent).toContain("ECONNREFUSED");
+    // expanded toggle now shows ▾ (collapse affordance)
+    expect(
+      (row.querySelector('[data-testid="json-toggle"]') as HTMLElement)
+        .textContent,
+    ).toContain("▾");
+  });
+
+  it("collapses the JsonInspector on a second toggle click", async () => {
+    const jsonLine = '{"event":"x"}';
+    mockedGetLines.mockImplementation(() => Promise.resolve([jsonLine]));
+    const { container } = render(
+      <VirtualLogView sessionId="s1" totalLines={1} rowHeight={ROW} />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="0"]')).not.toBeNull(),
+    );
+    const toggle = container.querySelector(
+      '[data-testid="json-toggle"]',
+    ) as HTMLElement;
+    fireEvent.click(toggle);
+    await waitFor(() => expect(container.querySelector(".jtree")).not.toBeNull());
+    // second click collapses → tree gone, affordance back to ▸
+    fireEvent.click(toggle);
+    await waitFor(() => expect(container.querySelector(".jtree")).toBeNull());
+    expect(
+      (container.querySelector('[data-testid="json-toggle"]') as HTMLElement)
+        .textContent,
+    ).toContain("▸展开JSON");
+  });
+
+  it("shows no ▸展开JSON affordance on non-JSON lines", async () => {
+    // default beforeEach mock returns fakeLine(): "14:22:01 ERROR DB connection refused"
+    const { container } = render(
+      <VirtualLogView sessionId="s1" totalLines={1} rowHeight={ROW} />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="0"]')).not.toBeNull(),
+    );
+    expect(container.querySelector('[data-testid="json-toggle"]')).toBeNull();
+    expect(container.textContent).not.toContain("展开JSON");
+  });
+
+  it("does not trigger onJumpToLine when clicking inside the expanded JsonInspector tree", async () => {
+    // nested object so there's a ▾/▸ twist to click inside the tree
+    const jsonLine = '{"user":{"id":42}}';
+    mockedGetLines.mockImplementation(() => Promise.resolve([jsonLine]));
+    const onJumpToLine = vi.fn();
+    const { container } = render(
+      <VirtualLogView
+        sessionId="s1"
+        totalLines={1}
+        rowHeight={ROW}
+        onJumpToLine={onJumpToLine}
+      />,
+    );
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="0"]')).not.toBeNull(),
+    );
+    // expand the inline tree
+    fireEvent.click(container.querySelector('[data-testid="json-toggle"]')!);
+    await waitFor(() => expect(container.querySelector(".jtree")).not.toBeNull());
+    // click a nested twist inside the tree — must NOT bubble up to the row's
+    // onJumpToLine (the tree manages its own fold state; jump is a row action)
+    const twist = container.querySelector('[data-key="user"]') as HTMLElement;
+    expect(twist).not.toBeNull();
+    fireEvent.click(twist);
+    expect(onJumpToLine).not.toHaveBeenCalled();
+  });
 });
