@@ -29,7 +29,7 @@
 // — the inner branch uses the user's combinator; the outer is always AND.
 
 import { useEffect, useRef, useState } from "react";
-import { useSearch, getLines } from "../lib/ipc";
+import { useSearch, getLines, type SearchStatus } from "../lib/ipc";
 import { SearchHistory } from "./SearchHistory";
 import "./SearchPanel.css";
 
@@ -77,12 +77,38 @@ export type QueryNodeDto =
 
 export type SearchRequest = { root: QueryNodeDto };
 
+/** The lifted search controller's reactive view (the slice SearchPanel consumes).
+ *  When App owns `useSearch` (Task 1 ④a), it passes this down; SearchPanel reads
+ *  matches/status/run/cancel from it instead of instantiating its own — so the
+ *  SAME controller's matches also flow to VirtualLogView (the search→view loop)
+ *  and, in later tasks, to ExportDialog's current-query export. */
+export type SearchControllerView = {
+  matches: number[];
+  status: SearchStatus;
+  run: () => Promise<void>;
+  cancel: () => void;
+};
+
 export type SearchPanelProps = {
   sessionId: string;
   /** Path label for the active session's file (resolved by the caller from
    *  `useSessions`); falls back to sessionId when absent. */
   filePath?: string;
   cap?: number;
+  /** Lifted controller from App (controlled mode). When provided, SearchPanel
+   *  consumes its matches/status/run/cancel instead of a local useSearch. When
+   *  absent, SearchPanel falls back to a local useSearch (standalone/test mode).
+   *  The controller registry dedupes by (sessionId, query, cap), so the two
+   *  paths never trigger duplicate scans — they resolve to the SAME controller. */
+  search?: SearchControllerView;
+  /** Lifted query setter from App. SearchPanel calls this with the built query
+   *  when the user runs a search (Search click / history ◀▶▾), so App's
+   *  `useSearch` keys on the active query. */
+  setActiveQuery?: (q: SearchRequest | null) => void;
+  /** Called with a matched line number when a result row is clicked, so
+   *  MainWindow can mark + scroll VirtualLogView to it (the jump half of the
+   *  search→view loop). */
+  onJumpToLine?: (line: number) => void;
 };
 
 // ---------- pure logic (exported for direct unit testing) ----------
@@ -185,15 +211,45 @@ const EMPTY_FORM: QueryForm = {
 };
 /** Stable sentinel for `useSearch` when the form is invalid (no keywords): the
  *  controller stays idle forever (Search disabled → `run` never invoked), so
- *  this is never sent across the wire. */
-const EMPTY_QUERY: SearchRequest = {
+ *  this is never sent across the wire. Exported so App can pass it as the
+ *  `activeQuery` sentinel when no query is active yet (the hooks rule requires
+ *  `useSearch` be called unconditionally). */
+export const EMPTY_QUERY: SearchRequest = {
   root: { kind: "leaf", predicate: { kind: "text", text: "" } },
 };
+
+/** Walk the query tree; return the first `text` predicate's term. Used by App
+ *  to derive VirtualLogView's `highlightTerm` (the keyword wrapped in
+ *  `<mark class="hit">` inside matched lines) from the active SearchRequest.
+ *  "" when there is no text predicate (e.g. a level-only query). */
+export function extractHighlightTerm(q: SearchRequest | null): string {
+  if (!q) return "";
+  return firstText(q.root) ?? "";
+}
+
+function firstText(node: QueryNodeDto): string | null {
+  if (node.kind === "leaf") {
+    const p = node.predicate;
+    if (p.kind === "text") return p.text;
+    if (p.kind === "not") {
+      return firstText({ kind: "leaf", predicate: p.inner });
+    }
+    return null;
+  }
+  for (const c of node.children) {
+    const t = firstText(c);
+    if (t) return t;
+  }
+  return null;
+}
 
 export function SearchPanel({
   sessionId,
   filePath,
   cap = 1000,
+  search,
+  setActiveQuery,
+  onJumpToLine,
 }: SearchPanelProps): React.ReactElement {
   const [form, setForm] = useState<QueryForm>(EMPTY_FORM);
   const [kwInput, setKwInput] = useState("");
@@ -223,7 +279,13 @@ export function SearchPanel({
   }, [sessionId]);
 
   const query = buildQuery(form) ?? EMPTY_QUERY;
-  const { matches, status, run, cancel } = useSearch(sessionId, query, cap);
+  // The controller: App's lifted instance when `search` is provided (controlled
+  // — the same matches flow to VirtualLogView), else a local useSearch
+  // (standalone/test mode). The registry dedupes by (sessionId, query, cap), so
+  // the local call in controlled mode resolves to the SAME controller App owns
+  // — the two paths never trigger duplicate scans.
+  const local = useSearch(sessionId, query, cap);
+  const { matches, status, run, cancel } = search ?? local;
 
   // Fetch the first matching line's content when a file row is expanded, so the
   // expand shows real decoded text (fetched via ③a's `getLines`). A monotonic
@@ -283,6 +345,10 @@ export function SearchPanel({
     if (!hasKeyword) return;
     pushHistory(form, matches.length);
     setHistoryOpen(false);
+    // Lift the built query to App so its useSearch keys on it (the controller
+    // whose matches also flow to VirtualLogView). Batched with setRunTick →
+    // App re-renders with the new controller before the run effect fires.
+    setActiveQuery?.(buildQuery(form));
     setRunTick((t) => t + 1);
   }
 
@@ -294,6 +360,7 @@ export function SearchPanel({
       timeRange: { ...entry.form.timeRange },
     });
     setHistoryOpen(false);
+    setActiveQuery?.(buildQuery(entry.form));
     setRunTick((t) => t + 1);
   }
 
@@ -491,7 +558,19 @@ export function SearchPanel({
             {expanded && (
               <div className="fsub">
                 {lineContent != null && (
-                  <div className="mln hit">
+                  <div
+                    className="mln hit"
+                    role={onJumpToLine ? "button" : undefined}
+                    tabIndex={onJumpToLine ? 0 : undefined}
+                    aria-label={
+                      onJumpToLine ? `Jump to line ${matches[0]}` : undefined
+                    }
+                    onClick={
+                      onJumpToLine
+                        ? () => onJumpToLine(matches[0])
+                        : undefined
+                    }
+                  >
                     <span className="no">{matches[0]}</span>
                     <span className="msg">{lineContent}</span>
                   </div>

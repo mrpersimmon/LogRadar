@@ -22,6 +22,7 @@ import { FileTree } from "../components/FileTree";
 import { VirtualLogView } from "../components/VirtualLogView";
 import { Minimap } from "../components/Minimap";
 import { SearchPanel } from "../components/SearchPanel";
+import type { SearchControllerView, SearchRequest } from "../components/SearchPanel";
 import "./MainWindow.css";
 
 export type MainWindowProps = {
@@ -29,6 +30,16 @@ export type MainWindowProps = {
    *  WelcomePage so files opened there are visible here. Passed in (not called
    *  here) so the open-files registry is a single source of truth. */
   sessions: SessionsApi;
+  /** Lifted search controller from App (Task 1 ④a). When provided, the SAME
+   *  controller's matches flow to VirtualLogView (hit highlight) + SearchPanel
+   *  (results) — closing the ③b-deferred I3/I4 search→view loop. */
+  search?: SearchControllerView;
+  /** Lifted query setter from App. Forwarded to SearchPanel so its Search
+   *  click builds the query → App's `useSearch` keys on it. */
+  setActiveQuery?: (q: SearchRequest | null) => void;
+  /** The keyword to highlight inside matched lines (derived by App from the
+   *  active query via `extractHighlightTerm`). Forwarded to VirtualLogView. */
+  highlightTerm?: string;
 };
 
 function basename(path: string): string {
@@ -36,7 +47,12 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
-export function MainWindow({ sessions }: MainWindowProps) {
+export function MainWindow({
+  sessions,
+  search,
+  setActiveQuery,
+  highlightTerm,
+}: MainWindowProps) {
   // Destructure the registry; `map` is the sessions Map (prop field `sessions`).
   const { sessions: map, activeId, setActive, close } = sessions;
   const active = activeId ? map.get(activeId) ?? null : null;
@@ -53,6 +69,11 @@ export function MainWindow({ sessions }: MainWindowProps) {
       prev.start === start && prev.end === end ? prev : { start, end },
     );
   }, []);
+
+  // The jump target: a VirtualLogView row click (or a SearchPanel result-row
+  // click) calls onJumpToLine(n) → we set this → VirtualLogView marks line n
+  // with the jump style. The search→view loop's jump half.
+  const [jumpTarget, setJumpTarget] = useState<number | null>(null);
 
   return (
     <div className="mw">
@@ -73,6 +94,10 @@ export function MainWindow({ sessions }: MainWindowProps) {
                 <VirtualLogView
                   sessionId={active.sessionId}
                   totalLines={active.lineCount}
+                  hits={search?.matches}
+                  highlightTerm={highlightTerm}
+                  jumpToLine={jumpTarget}
+                  onJumpToLine={(n: number) => setJumpTarget(n)}
                   onViewportChange={onViewportChange}
                 />
                 <Minimap
@@ -86,6 +111,9 @@ export function MainWindow({ sessions }: MainWindowProps) {
               <SearchPanel
                 sessionId={active.sessionId}
                 filePath={active.path}
+                search={search}
+                setActiveQuery={setActiveQuery}
+                onJumpToLine={(n: number) => setJumpTarget(n)}
               />
             </>
           ) : (

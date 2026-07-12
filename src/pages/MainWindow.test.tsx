@@ -151,4 +151,91 @@ describe("MainWindow", () => {
       expect(parseFloat(sweep.style.top)).toBeCloseTo(40, 5);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Task 1 (④a): the search→view loop. App lifts `useSearch` so the SAME
+  // controller's matches flow to VirtualLogView (hit highlight) + the jump
+  // loop (a row click → jumpToLine marks the line). These assert MainWindow
+  // wires the lifted `search` into VirtualLogView's existing
+  // hits/highlightTerm/jumpToLine/onJumpToLine props.
+  // -------------------------------------------------------------------------
+  /** getLines lines that contain the "refused" term so mark.hit can wrap it.
+   *  Returns a Promise (VirtualLogView calls `.then` on the result). */
+  function refusedLines(_sid: string, start: number, count: number) {
+    return Promise.resolve(
+      Array.from(
+        { length: count },
+        (_, i) =>
+          `14:22:0${(start + i) % 10}.${String((start + i) % 1000).padStart(3, "0")} ERROR DB connection refused line${start + i}`,
+      ),
+    );
+  }
+
+  it("passes lifted search.matches + highlightTerm to VirtualLogView (a hit line is highlighted)", async () => {
+    const sessions = new Map([["s1", meta("s1", "/logs/auth/a.log", 1_000_000)]]);
+    getLinesMock.mockImplementation(refusedLines);
+    const search = {
+      matches: [500000],
+      status: "done" as const,
+      run: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const { container } = render(
+      <MainWindow
+        sessions={api(sessions, "s1")}
+        search={search}
+        highlightTerm="refused"
+      />,
+    );
+
+    const scroll = container.querySelector(
+      '[data-testid="log-viewport"]',
+    ) as HTMLElement;
+    forceMetrics(scroll, 500_000 * 20);
+    fireEvent.scroll(scroll);
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="500000"]')).not.toBeNull(),
+    );
+    const row = container.querySelector('[data-line="500000"]') as HTMLElement;
+    expect(row.classList.contains("hit")).toBe(true);
+    const mark = row.querySelector("mark.hit") as HTMLElement;
+    expect(mark).not.toBeNull();
+    expect(mark.textContent).toBe("refused");
+  });
+
+  it("wires a VirtualLogView row click → onJumpToLine → jumpToLine (the clicked row is marked jump)", async () => {
+    const sessions = new Map([["s1", meta("s1", "/logs/auth/a.log", 1_000_000)]]);
+    getLinesMock.mockImplementation(refusedLines);
+    const search = {
+      matches: [500000],
+      status: "done" as const,
+      run: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const { container } = render(
+      <MainWindow
+        sessions={api(sessions, "s1")}
+        search={search}
+        highlightTerm="refused"
+      />,
+    );
+
+    const scroll = container.querySelector(
+      '[data-testid="log-viewport"]',
+    ) as HTMLElement;
+    forceMetrics(scroll, 500_000 * 20);
+    fireEvent.scroll(scroll);
+
+    await waitFor(() =>
+      expect(container.querySelector('[data-line="500000"]')).not.toBeNull(),
+    );
+    const row = container.querySelector('[data-line="500000"]') as HTMLElement;
+    expect(row.classList.contains("jump")).toBe(false); // not yet the jump target
+    fireEvent.click(row);
+    const rowAfter = container.querySelector(
+      '[data-line="500000"]',
+    ) as HTMLElement;
+    expect(rowAfter.classList.contains("jump")).toBe(true);
+  });
 });
