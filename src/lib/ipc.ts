@@ -1,10 +1,11 @@
 // IPC client: typed `invoke` wrappers around sub-project ②'s Tauri commands
-// (src-tauri/src/commands.rs), plus a `useSearch` factory that streams
+// (src-tauri/src/commands.rs), plus a reactive `useSearch` that streams
 // `SearchEvent` batches over a Tauri 2.x `Channel<T>`.
 //
 // JSON contract is camelCase throughout, matching the Rust side's
 // `#[serde(rename_all = "camelCase")]`.
 
+import { useSyncExternalStore } from "react";
 import { invoke, Channel } from "@tauri-apps/api/core";
 
 export type OpenResponse = {
@@ -57,54 +58,134 @@ export function workspaceList() {
 // `on_event: Channel<SearchEvent>`; Tauri maps the JS-side `onEvent` arg to it
 // and routes `on_event.send(ev)` into `channel.onmessage` here.
 //
-// This is a thin ③a factory (plain controller, no React state reactivity);
-// ③b can wrap it in `useSyncExternalStore` for reactive re-render. The unit
-// test proves the `onmessage` batch-accumulation logic; the real Channel
-// streaming is proven end-to-end in ③b/④.
-export type SearchStatus = "idle" | "running" | "done" | "cancelled";
+// The controller is `useSyncExternalStore`-ready: it exposes `subscribe` plus a
+// `getSnapshot` that returns a referentially-stable array reference — stable
+// across reads while nothing changed, and a NEW reference whenever a batch
+// arrives (`matches = [...matches, ...batch.matches]`, never in-place `push`).
+// The React hook `useSearch` below wires that store into React. The unit test
+// drives `channel.onmessage` directly to prove both the snapshot contract and
+// the batch-accumulation logic; the real Channel streaming is proven
+// end-to-end in ③b/④.
+export type SearchStatus = "idle" | "running" | "done" | "cancelled" | "error";
 
 export interface SearchController {
-  matches: number[];
-  status: SearchStatus;
+  /** Current matches snapshot (referentially stable until a new batch arrives). */
+  readonly matches: number[];
+  readonly status: SearchStatus;
+  /** Register a listener; returns an unsubscribe function. */
+  subscribe: (cb: () => void) => () => void;
+  /** Snapshot getter for `useSyncExternalStore` — returns the live matches ref. */
+  getSnapshot: () => number[];
+  /** Snapshot getter for `useSyncExternalStore` — returns the status primitive. */
+  getStatus: () => SearchStatus;
   run: () => Promise<void>;
   cancel: () => void;
 }
 
-export function useSearch(sessionId: string, query: unknown, cap: number): SearchController {
-  const matches: number[] = [];
+// Singleton-per-(sessionId, query, cap): re-renders call `useSearch` again but
+// must NOT restart the search — the same controller (and its in-flight channel)
+// is reused. Keyed on the JSON-serialized query so shape-equal queries hit the
+// same controller even across distinct object identities.
+const controllerRegistry = new Map<string, SearchController>();
+
+function controllerKey(sessionId: string, query: unknown, cap: number): string {
+  return `${sessionId}:${cap}:${JSON.stringify(query)}`;
+}
+
+/**
+ * Returns the singleton search controller for (sessionId, query, cap).
+ * Exposed so unit tests can drive `channel.onmessage` and assert snapshot
+ * referential stability without spinning up a React renderer.
+ */
+export function getSearchController(
+  sessionId: string,
+  query: unknown,
+  cap: number,
+): SearchController {
+  const key = controllerKey(sessionId, query, cap);
+  const cached = controllerRegistry.get(key);
+  if (cached) return cached;
+  const created = createSearchController(sessionId, query, cap);
+  controllerRegistry.set(key, created);
+  return created;
+}
+
+/** Test-only escape hatch: clears the singleton registry between cases. */
+export function __resetSearchControllers(): void {
+  controllerRegistry.clear();
+}
+
+function createSearchController(
+  sessionId: string,
+  query: unknown,
+  cap: number,
+): SearchController {
+  let matches: number[] = [];
   let status: SearchStatus = "idle";
   let channel: Channel<SearchEvent> | null = null;
   const listeners = new Set<() => void>();
-  const notify = () => listeners.forEach((l) => l());
+  const notify = () => {
+    for (const l of listeners) l();
+  };
 
-  async function run() {
-    status = "running";
-    notify();
-    channel = new Channel<SearchEvent>();
-    channel.onmessage = (msg) => {
-      if (msg.kind === "batch") {
-        matches.push(...msg.matches);
-        notify();
-      } else {
-        status = msg.cancelled ? "cancelled" : "done";
-        notify();
-      }
-    };
-    await invoke("search", { sessionId, query, cap, onEvent: channel });
-  }
-
-  function cancel() {
-    if (sessionId) cancelSearch(sessionId);
-  }
-
-  return {
+  const ctrl: SearchController = {
     get matches() {
       return matches;
     },
     get status() {
       return status;
     },
-    run,
-    cancel,
+    subscribe(cb: () => void) {
+      listeners.add(cb);
+      return () => {
+        listeners.delete(cb);
+      };
+    },
+    getSnapshot: () => matches,
+    getStatus: () => status,
+    async run() {
+      status = "running";
+      notify();
+      channel = new Channel<SearchEvent>();
+      channel.onmessage = (msg) => {
+        if (msg.kind === "batch") {
+          // NEW array reference each batch — never mutate in place, so
+          // `useSyncExternalStore` sees a changed snapshot and re-renders.
+          matches = [...matches, ...msg.matches];
+          notify();
+        } else {
+          status = msg.cancelled ? "cancelled" : "done";
+          notify();
+        }
+      };
+      try {
+        await invoke("search", { sessionId, query, cap, onEvent: channel });
+      } catch {
+        status = "error";
+        notify();
+      }
+    },
+    cancel() {
+      if (sessionId) cancelSearch(sessionId);
+    },
   };
+  return ctrl;
+}
+
+/**
+ * Reactive React binding over the singleton search controller. `matches` and
+ * `status` are read through `useSyncExternalStore`, so the component re-renders
+ * whenever a batch arrives (new array ref) or the status changes. Re-renders
+ * reuse the same controller — they do not restart the search.
+ */
+export function useSearch(sessionId: string, query: unknown, cap: number): {
+  matches: number[];
+  status: SearchStatus;
+  run: () => Promise<void>;
+  cancel: () => void;
+} {
+  const ctrl = getSearchController(sessionId, query, cap);
+  const matches = useSyncExternalStore(ctrl.subscribe, ctrl.getSnapshot);
+  const status = useSyncExternalStore(ctrl.subscribe, ctrl.getStatus);
+  return { matches, status, run: ctrl.run, cancel: ctrl.cancel };
 }
