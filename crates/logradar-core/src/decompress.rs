@@ -3,8 +3,14 @@ use std::path::Path;
 use flate2::read::GzDecoder;
 
 /// Stream-decompress a gz stream and call `on_line(line_number, line_bytes)`
-/// for each line. line_number is 0-indexed. Does NOT build an index.
-pub fn gz_search<R: Read>(decoder: &mut GzDecoder<R>, mut on_line: impl FnMut(u64, &[u8])) -> io::Result<()> {
+/// for each line. line_number is 0-indexed. Does NOT build an index. The
+/// callback returns `bool`: `true` = continue scanning, `false` = stop early
+/// (returning early lets the caller halt decompression on cancel/cap instead
+/// of walking the rest of the stream).
+pub fn gz_search<R: Read>(
+    decoder: &mut GzDecoder<R>,
+    mut on_line: impl FnMut(u64, &[u8]) -> bool,
+) -> io::Result<()> {
     let mut reader = BufReader::new(decoder);
     let mut buf = Vec::with_capacity(8192);
     let mut line_no = 0u64;
@@ -13,7 +19,7 @@ pub fn gz_search<R: Read>(decoder: &mut GzDecoder<R>, mut on_line: impl FnMut(u6
         if read == 0 { break; }
         // strip trailing newline for the callback
         let end = buf.len().saturating_sub(if buf.last() == Some(&b'\n') { 1 } else { 0 });
-        on_line(line_no, &buf[..end]);
+        if !on_line(line_no, &buf[..end]) { break; }
         line_no += 1;
         buf.clear();
     }
@@ -128,8 +134,21 @@ mod tests {
         let file = std::fs::File::open(&p).unwrap();
         let mut dec = GzDecoder::new(file);
         let mut got = Vec::new();
-        gz_search(&mut dec, |_, b| got.push(String::from_utf8_lossy(b).to_string())).unwrap();
+        gz_search(&mut dec, |_, b| { got.push(String::from_utf8_lossy(b).to_string()); true }).unwrap();
         assert_eq!(got, vec!["alpha","beta","gamma"]);
+    }
+    #[test]
+    fn gz_search_stops_when_callback_returns_false() {
+        // Early-stop: the callback returning `false` must halt decompression
+        // after the first line (proves gz_search honors the early-stop signal
+        // rather than walking the whole stream).
+        let p = std::env::temp_dir().join("lr-gz-search-stop.gz");
+        write_gz(&p, &["alpha","beta","gamma","delta","epsilon"]);
+        let file = std::fs::File::open(&p).unwrap();
+        let mut dec = GzDecoder::new(file);
+        let mut calls = 0u64;
+        gz_search(&mut dec, |_, _| { calls += 1; false }).unwrap();
+        assert_eq!(calls, 1, "gz_search must stop after the callback returns false");
     }
     #[test]
     fn gz_view_random_access() {

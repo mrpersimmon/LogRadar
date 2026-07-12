@@ -24,9 +24,11 @@ pub struct QueryEngine;
 impl QueryEngine {
     /// Scans the whole session sequentially via `Session::scan_lines` (one-pass
     /// streaming for gz/zip — O(n); spec §7.4). Stops early if cancelled or cap
-    /// reached: those checks live inside the `scan_lines` closure and preserve
-    /// the original per-line check order (cancel, then cap, then eval). The first
-    /// terminating condition wins, matching the prior early-return semantics.
+    /// reached: the closure returns `false` (the early-stop signal) on cancel
+    /// or cap, so `scan_lines` halts iteration AND decompression promptly
+    /// (fast-cancel — restoring the original `if token.is_cancelled() { return }`
+    /// at loop top). Per-line check order (cancel, then cap, then eval) is
+    /// preserved; the first terminating condition wins.
     pub fn search(
         session: &mut Session,
         query: &Query,
@@ -39,11 +41,13 @@ impl QueryEngine {
         let mut truncated = false;
         let enc = session.encoding();
         let scan = session.scan_lines(|n, bytes| {
-            // Once a terminating condition fired, short-circuit every subsequent
-            // line (scan_lines still iterates, but no eval work is done).
-            if cancelled || truncated { return; }
-            if token.is_cancelled() { cancelled = true; return; }
-            if matches.len() >= cap { truncated = true; return; }
+            // Early-stop: signal `false` as soon as a terminating condition
+            // fires so scan_lines halts iteration/decompression (true
+            // fast-cancel). Once cancelled/truncated is set, scan_lines has
+            // already been told `false` and won't call this closure again, so
+            // no separate "already-terminated" short-circuit is needed.
+            if token.is_cancelled() { cancelled = true; return false; }
+            if matches.len() >= cap { truncated = true; return false; }
             let mut line = encoding::decode(enc, bytes);
             // CRLF: sources split on `\n` only, so a CRLF line carries a trailing
             // `\r`. Strip exactly one (mirrors Session::get_lines).
@@ -51,6 +55,7 @@ impl QueryEngine {
             if eval_node(&query.root, fmt, &line) {
                 matches.push(n);
             }
+            true // keep scanning
         });
         // The original implementation treated per-line fetch errors as
         // no-match-and-continue; scan_lines surfaces a mid-stream source error

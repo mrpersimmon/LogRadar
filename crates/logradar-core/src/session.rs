@@ -100,20 +100,26 @@ impl Session {
     /// trailing `\n`; a CRLF line leaves a trailing `\r` (the caller strips it,
     /// mirroring `get_lines`).
     ///
+    /// `f` returns `bool`: `true` = continue, `false` = stop early. All three
+    /// paths honor `false` — Mmap breaks the index loop, gz breaks out of
+    /// `gz_search`'s decompression loop (via its bool-returning callback), and
+    /// zip breaks the `read_until` loop — so a cancel/cap from the caller halts
+    /// iteration AND decompression promptly (fast-cancel), not just evaluation.
+    ///
     /// This is the search path (spec §7.4): gz streams via `decompress::gz_search`
     /// and zip via `read_until` — one decompression pass each — instead of the
     /// per-line random access used by `get_lines`/`line_at`, which would
     /// re-decompress from the nearest checkpoint each line (O(n²) for gz, and
     /// also wrong past the first >1MB checkpoint due to zran drift).
     /// `get_lines` is kept for the shell's viewport rendering.
-    pub fn scan_lines(&mut self, mut f: impl FnMut(u64, &[u8])) -> io::Result<()> {
+    pub fn scan_lines(&mut self, mut f: impl FnMut(u64, &[u8]) -> bool) -> io::Result<()> {
         match &mut self.src {
             Source::Mmap(m) => {
                 if let Some(idx) = self.index.as_ref() {
                     let bytes: &[u8] = &m[..];
                     for n in 0..idx.line_count() {
                         if let Some(line) = idx.line_at(bytes, n) {
-                            f(n, line);
+                            if !f(n, line) { break; }
                         }
                     }
                 }
@@ -122,7 +128,7 @@ impl Session {
             Source::Gz { path, .. } => {
                 let file = File::open(path.as_path())?;
                 let mut decoder = GzDecoder::new(file);
-                gz_search(&mut decoder, &mut f)
+                gz_search(&mut decoder, |n, b| f(n, b))
             }
             Source::Zip { path, entry } => {
                 let file = File::open(path.as_path())?;
@@ -136,7 +142,7 @@ impl Session {
                     let read = reader.read_until(b'\n', &mut buf)?;
                     if read == 0 { break; }
                     let end = buf.len().saturating_sub(if buf.last() == Some(&b'\n') { 1 } else { 0 });
-                    f(line_no, &buf[..end]);
+                    if !f(line_no, &buf[..end]) { break; }
                     line_no += 1;
                 }
                 Ok(())

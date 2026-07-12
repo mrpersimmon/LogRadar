@@ -73,6 +73,20 @@ fn write_gz(p: &std::path::Path, lines: &[String]) {
     enc.finish().unwrap();
 }
 
+/// Build a zip file with a single entry from the given lines (each terminated
+/// with `\n`, matching how the zip Session splits lines).
+fn write_zip(p: &std::path::Path, entry: &str, lines: &[String]) {
+    use std::io::Write;
+    let f = std::fs::File::create(p).unwrap();
+    let mut zip = zip::ZipWriter::new(f);
+    let opts = zip::write::FileOptions::default();
+    zip.start_file(entry, opts).unwrap();
+    for l in lines {
+        writeln!(zip, "{l}").unwrap();
+    }
+    zip.finish().unwrap();
+}
+
 // --- Finding 4(a): gz Session through the engine (streaming path) ---
 //
 // Pre-Finding-1, QueryEngine::search fetched each line via Session::get_lines(n,1)
@@ -228,4 +242,120 @@ fn epoch_ms(s: &str) -> i64 {
     use chrono::{NaiveDateTime, TimeZone, Utc};
     let dt = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").unwrap();
     Utc.from_utc_datetime(&dt).timestamp_millis()
+}
+
+// --- Fix: fast-cancel in scan_lines (early-stop on cancel/cap) ---
+//
+// The prior final-fix wired streaming gz/zip search into QueryEngine via
+// Session::scan_lines, but the `FnMut(u64, &[u8])` closure could only
+// short-circuit *evaluation*, not *iteration*: a cancelled gz search kept
+// decompressing the rest of the file (the original QueryEngine::search had a
+// `if token.is_cancelled() { return }` at loop top = true early-exit). The fix
+// changes the closure signature to `FnMut(u64, &[u8]) -> bool` — `false` signals
+// early-stop — and scan_lines (Mmap index loop / gz_search callback / zip
+// read_until loop) breaks on `false`.
+//
+// The three counter tests below are the load-bearing RED: they pass a closure
+// that returns `false` on the FIRST call and assert scan_lines called it
+// exactly ONCE (proving iteration — not just evaluation — halted). Pre-fix the
+// closure returned `()` so these would not even compile (signature mismatch =
+// early-stop not wired = RED); once compiled against the fix, the pre-fix
+// behavior would walk all 5000 lines (count == 5000), still failing the
+// `== 1` assertion — so the assertion is a genuine behavioral guard either way.
+
+#[test]
+fn scan_lines_gz_stops_when_closure_returns_false() {
+    let lines: Vec<String> = (0..5000).map(|i| format!("line-{i:06}")).collect();
+    let p = tmp_path("-scan-stop-gz.gz");
+    write_gz(&p, &lines);
+
+    let mut s = Session::open(&p).unwrap();
+    let mut calls = 0u64;
+    s.scan_lines(|_n, _b| {
+        calls += 1;
+        false // signal early-stop immediately
+    })
+    .unwrap();
+    assert_eq!(
+        calls, 1,
+        "gz scan_lines must stop after the closure returns false (got {calls} calls, expected 1)"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn scan_lines_mmap_stops_when_closure_returns_false() {
+    let content: String = (0..5000).map(|i| format!("line-{i:06}\n")).collect();
+    let p = write_tmp(&content);
+    let mut s = Session::open(&p).unwrap();
+    let mut calls = 0u64;
+    s.scan_lines(|_n, _b| {
+        calls += 1;
+        false
+    })
+    .unwrap();
+    assert_eq!(
+        calls, 1,
+        "mmap scan_lines must stop after the closure returns false (got {calls} calls, expected 1)"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+#[test]
+fn scan_lines_zip_stops_when_closure_returns_false() {
+    let lines: Vec<String> = (0..5000).map(|i| format!("line-{i:06}")).collect();
+    let p = tmp_path("-scan-stop.zip");
+    write_zip(&p, "a.log", &lines);
+
+    let mut s = Session::open(&p).unwrap();
+    let mut calls = 0u64;
+    s.scan_lines(|_n, _b| {
+        calls += 1;
+        false
+    })
+    .unwrap();
+    assert_eq!(
+        calls, 1,
+        "zip scan_lines must stop after the closure returns false (got {calls} calls, expected 1)"
+    );
+    let _ = std::fs::remove_file(&p);
+}
+
+// End-to-end cancel path through QueryEngine over a gz Session. A pre-cancelled
+// token must surface as `cancelled == true` with NO matches — proving the
+// engine's scan_lines closure observes the cancel before any line is evaluated.
+// (This is the task's minimum guard for "cancel works on gz"; the prompt
+// decompression halt is proven structurally by the scan_lines_*_stops tests
+// above, since SearchResult is observably identical whether iteration halts or
+// not — only a counter can see the difference.)
+#[test]
+fn search_pre_cancelled_gz_is_cancelled_and_empty() {
+    // 5000 lines; only line 0 contains the needle. Pre-cancelled → the engine
+    // must report cancelled with zero matches.
+    let lines: Vec<String> = (0..5000)
+        .map(|i| {
+            if i == 0 {
+                "ERROR hit line-000000".to_string()
+            } else {
+                format!("INFO ok line-{i:06}")
+            }
+        })
+        .collect();
+    let p = tmp_path("-precancel-gz.gz");
+    write_gz(&p, &lines);
+
+    let mut s = Session::open(&p).unwrap();
+    let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+    let tok = CancellationToken::new();
+    tok.cancel(); // pre-cancel before the scan starts
+    let fmt = s.format().clone();
+    let res = QueryEngine::search(&mut s, &q, &fmt, &tok, usize::MAX);
+    assert!(
+        res.matches.is_empty(),
+        "pre-cancelled gz search must not match, got {:?}",
+        res.matches
+    );
+    assert!(res.cancelled, "pre-cancelled gz search must report cancelled=true");
+    assert!(!res.truncated, "pre-cancelled gz search must not report truncated");
+    let _ = std::fs::remove_file(&p);
 }
