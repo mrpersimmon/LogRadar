@@ -104,7 +104,7 @@ fn default_level_labels() -> Vec<String> {
 pub fn parse_level(fmt: &LineFormat, line: &str) -> Option<Level> {
     let lt = fmt.level.as_ref()?;
     for lab in &lt.labels {
-        if line.contains(lab) {
+        if contains_word(line, lab) {
             return Some(match lab.to_uppercase().as_str() {
                 "ERROR" | "ERR" => Level::Error,
                 "WARN" | "WARNING" => Level::Warn,
@@ -116,6 +116,35 @@ pub fn parse_level(fmt: &LineFormat, line: &str) -> Option<Level> {
         }
     }
     None
+}
+
+/// Case-insensitive, whole-word substring test.
+///
+/// `needle` matches only where it is bounded on both sides by a non-alphanumeric
+/// character (or string start/end). This prevents `"INFO"` matching inside
+/// `"INFORMATION"` (false positives) while still matching lowercase `"error"`
+/// in mixed-case lines (false negatives) — see `parse_level`.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    // ASCII-only lowercasing keeps byte length stable, so byte indexing stays safe.
+    let h = haystack.to_ascii_lowercase();
+    let n = needle.to_ascii_lowercase();
+    let hb = h.as_bytes();
+    let nlen = n.len();
+    let mut start = 0;
+    while let Some(rel) = h[start..].find(&n) {
+        let s = start + rel;
+        let e = s + nlen;
+        let left_ok = s == 0 || !hb[s - 1].is_ascii_alphanumeric();
+        let right_ok = e == h.len() || !hb[e].is_ascii_alphanumeric();
+        if left_ok && right_ok {
+            return true;
+        }
+        start = s + 1;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -202,5 +231,55 @@ mod tests {
         assert_eq!(parse_epoch_ms(&ems, "no digits at all"), None);
         // EpochMs configured but token below threshold (looks like seconds) → None.
         assert_eq!(parse_epoch_ms(&ems, "1720783321 too small"), None);
+    }
+
+    // --- parse_level hardening: case-insensitive + whole-word matching ---
+
+    fn fmt_with_default_levels() -> LineFormat {
+        LineFormat {
+            timestamp: None,
+            level: Some(LevelToken {
+                labels: default_level_labels(),
+            }),
+            is_json: false,
+        }
+    }
+
+    #[test]
+    fn parse_level_matches_lowercase_case_insensitively() {
+        let fmt = fmt_with_default_levels();
+        // Lowercase "error" must match (case-insensitive) — currently a false negative.
+        assert_eq!(
+            parse_level(&fmt, "2026-07-12 14:22:01 error db refused"),
+            Some(Level::Error)
+        );
+    }
+
+    #[test]
+    fn parse_level_word_boundary_suppresses_information_false_positive() {
+        let fmt = fmt_with_default_levels();
+        // "INFO" must NOT match inside "INFORMATION" — word boundary required.
+        assert_eq!(parse_level(&fmt, "INFORMATION about the system"), None);
+    }
+
+    #[test]
+    fn parse_level_matches_mixed_case_warning() {
+        let fmt = fmt_with_default_levels();
+        // "WARNING" must resolve to Level::Warn via its own label entry;
+        // word-boundary must not let "WARN" steal it nor block "WARNING".
+        assert_eq!(
+            parse_level(&fmt, "2026-07-12 14:22:01 WARNING retry"),
+            Some(Level::Warn)
+        );
+    }
+
+    #[test]
+    fn parse_level_still_matches_uppercase_error() {
+        let fmt = fmt_with_default_levels();
+        // Regression guard: existing uppercase behaviour preserved.
+        assert_eq!(
+            parse_level(&fmt, "2026-07-12 14:22:01 ERROR db refused"),
+            Some(Level::Error)
+        );
     }
 }
