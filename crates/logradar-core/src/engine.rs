@@ -12,6 +12,12 @@ impl CancellationToken {
     pub fn cancel(&self) { self.cancelled.store(true, Ordering::Relaxed) }
 }
 impl Default for CancellationToken { fn default() -> Self { Self::new() } }
+impl Clone for CancellationToken {
+    /// Shareable clone: the inner `AtomicBool` is refcounted, so a clone lets
+    /// another closure (e.g. export's write callback) signal cancel to an
+    /// in-flight `search_stream` scan that owns the original by reference.
+    fn clone(&self) -> Self { Self { cancelled: Arc::clone(&self.cancelled) } }
+}
 
 pub struct SearchResult {
     pub matches: Vec<u64>,   // line numbers that matched
@@ -73,16 +79,25 @@ impl QueryEngine {
 }
 
 impl QueryEngine {
-    /// Streaming variant of `search`: calls `on_match(line_no)` per match during the scan,
-    /// checks the cancel token between lines, stops at `cap`. Does NOT accumulate a Vec —
-    /// the caller streams matches via the callback. Returns a summary.
+    /// Streaming variant of `search`: calls `on_match(line_no, decoded_line)`
+    /// per match during the scan, checks the cancel token between lines, stops at
+    /// `cap`. Does NOT accumulate a Vec — the caller streams matches via the
+    /// callback. Returns a summary.
+    ///
+    /// The callback receives the **decoded** line content (`&str`) — already
+    /// decoded via `encoding::decode(enc, bytes)` + single trailing `\r` strip
+    /// (mirroring `Session::get_lines`) — so callers like the `export` command
+    /// can write matches one-pass without re-fetching each line via
+    /// `get_lines(n,1)` (which is O(n²) for gz AND inherits the GzView zran
+    /// drift for >1MB gz). Search-only callers that just need the line NUMBER
+    /// ignore the `&str` arg.
     pub fn search_stream(
         session: &mut Session,
         query: &Query,
         fmt: &LineFormat,
         token: &CancellationToken,
         cap: usize,
-        mut on_match: impl FnMut(u64),
+        mut on_match: impl FnMut(u64, &str),
     ) -> StreamResult {
         let mut matched: u64 = 0;
         let mut cancelled = false;
@@ -100,7 +115,7 @@ impl QueryEngine {
             if matched >= cap as u64 { truncated = true; return false; }
             let mut line = encoding::decode(enc, bytes);
             if line.ends_with('\r') { line.pop(); }
-            if eval_node(&query.root, fmt, &line) { on_match(n); matched += 1; }
+            if eval_node(&query.root, fmt, &line) { on_match(n, &line); matched += 1; }
             true
         });
         let _ = scan_result; // scan completes; cancelled/truncated handled via early-stop above
@@ -250,7 +265,7 @@ mod stream_tests {
         let tok = CancellationToken::new();
         let fmt = s.format().clone();
         let mut got = Vec::new();
-        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n, _line| got.push(n));
         assert_eq!(got, vec![1, 2, 4]);
         assert_eq!(res.matched, 3);
         assert!(!res.cancelled && !res.truncated);
@@ -263,7 +278,7 @@ mod stream_tests {
         let tok = CancellationToken::new();
         let fmt = s.format().clone();
         let mut got = Vec::new();
-        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, 3, |n| got.push(n));
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, 3, |n, _line| got.push(n));
         assert_eq!(got.len(), 3);
         assert!(res.truncated);
     }
@@ -276,7 +291,7 @@ mod stream_tests {
         tok.cancel();
         let fmt = s.format().clone();
         let mut got = Vec::new();
-        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n, _line| got.push(n));
         assert!(got.is_empty());
         assert!(res.cancelled);
     }
@@ -297,9 +312,27 @@ mod stream_tests {
         let tok = CancellationToken::new();
         let fmt = s.format().clone();
         let mut got = Vec::new();
-        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n, _line| got.push(n));
         assert_eq!(got, vec![0], "GBK-decoded line 0 must match Text(\"错误\")");
         assert_eq!(res.matched, 1);
         assert!(!res.cancelled && !res.truncated);
+    }
+    #[test]
+    fn search_stream_passes_decoded_line_content() {
+        // New: the on_match callback now receives the DECODED line content (&str),
+        // not just the line number. A search over GBK bytes must yield the
+        // correctly-decoded UTF-8 string `连接错误 hit` (not mangled U+FFFD).
+        // This guards the signature change FnMut(u64) → FnMut(u64, &str).
+        let gbk_bytes = encoding_rs::GBK.encode("连接错误 hit\nINFO ok\n").0.into_owned();
+        let p = write_tmp_bytes(&gbk_bytes);
+        let mut s = Session::open(&p).unwrap();
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("错误".into()))).unwrap();
+        let tok = CancellationToken::new();
+        let fmt = s.format().clone();
+        let mut lines: Vec<String> = Vec::new();
+        QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |_n, line| lines.push(line.to_string()));
+        assert_eq!(lines, vec!["连接错误 hit".to_string()],
+            "on_match must receive the GBK-decoded UTF-8 line, not raw/mangled bytes");
+        let _ = std::fs::remove_file(&p);
     }
 }

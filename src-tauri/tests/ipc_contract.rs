@@ -136,3 +136,49 @@ fn invalid_regex_search_request_yields_error_not_panic() {
     let err = req.into_query();
     assert!(err.is_err(), "invalid regex must surface as Err, not panic");
 }
+
+// --- M2: genuine MID-search cancel (not pre-cancel) ---
+//
+// The brief's `cancel_stops_search_midway` test (above) PRE-cancels the token
+// before run_search_streaming starts — it proves the engine honors a cancel
+// set at t=0, but NOT that a cancel set WHILE the scan is running stops it
+// mid-flight with partial matches. This test spawns the scan on its own
+// thread, waits until the search thread has emitted at least one Batch (real
+// mid-scan progress: ≥64 matches found, but 200_000 total exist so the scan is
+// still running), THEN cancels, and asserts: cancelled==true, partial matches
+// collected (0 < matched < total). RED if cancel-while-running were a no-op
+// (the I1 bug: a 2nd search couldn't cancel the 1st because of lock ordering
+// — same class of "cancel doesn't land" failure this guards against).
+#[test]
+fn mid_search_cancel_yields_partial_matches_and_cancelled() {
+    let state = AppState::default();
+    let id = open(&state, &"ERROR hit\n".repeat(200_000));
+    let entry = state.get(&id).unwrap();
+    let fmt = entry.session.lock().unwrap().format().clone();
+    let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+    let tok = Arc::new(CancellationToken::new());
+    let events: Arc<Mutex<Vec<SearchEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let ev_for_thread = events.clone();
+    let tok_for_thread = tok.clone();
+    let handle = std::thread::spawn(move || {
+        run_search_streaming(&entry, &q, &fmt, tok_for_thread, usize::MAX, move |ev| {
+            ev_for_thread.lock().unwrap().push(ev);
+        })
+    });
+    // Wait until the scan has emitted real partial progress (a Batch ≥64
+    // matches), then cancel mid-scan.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let partial: usize = events.lock().unwrap().iter()
+            .filter_map(|e| match e { SearchEvent::Batch { matches } => Some(matches.len()), _ => None })
+            .sum();
+        if partial > 0 { break; }
+        if std::time::Instant::now() > deadline { panic!("scan never emitted a batch (too fast?)"); }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    tok.cancel(); // mid-search cancel
+    let res = handle.join().expect("search thread must not panic");
+    assert!(res.cancelled, "a mid-scan cancel must surface as cancelled=true");
+    assert!(res.matched > 0, "some partial matches must have been collected before cancel");
+    assert!(res.matched < 200_000, "the scan must not have completed before the cancel landed");
+}

@@ -19,17 +19,35 @@ pub fn config_dir() -> PathBuf {
 fn dirs_or_temp() -> PathBuf {
     // v1: use the OS config dir if available, else temp. (Avoids a dirs dep for the core shell;
     // sub-project 4 can swap in the `dirs` crate.)
-    std::env::var_os("HOME").map(PathBuf::from).map(|h| h.join(".config"))
-        .unwrap_or_else(|| std::env::temp_dir())
+    std::env::var_os("HOME").map(PathBuf::from).map(|h| h.join(".config")).unwrap_or_else(std::env::temp_dir)
+}
+
+/// I7: validate a workspace name before using it as a filename. Rejects path
+/// traversal / control chars: empty, `/`, `\`, `..`, NUL, or a leading `.`.
+/// `ws.name`/`name` is otherwise used verbatim as `{name}.json` under the
+/// workspaces dir, so a name like `../evil` would write/read outside it.
+fn validate_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains("..")
+        || name.contains('\0')
+        || name.starts_with('.')
+    {
+        return Err("invalid workspace name".to_string());
+    }
+    Ok(())
 }
 
 pub fn save(ws: &Workspace) -> Result<(), String> {
+    validate_name(&ws.name)?;
     let mut p = config_dir();
     p.push(format!("{}.json", ws.name));
     let data = serde_json::to_string_pretty(ws).map_err(|e| e.to_string())?;
     std::fs::write(&p, data).map_err(|e| e.to_string())
 }
 pub fn load(name: &str) -> Result<Workspace, String> {
+    validate_name(name)?;
     let mut p = config_dir();
     p.push(format!("{name}.json"));
     let data = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
@@ -70,5 +88,31 @@ mod tests {
     #[test]
     fn load_missing_errors() {
         assert!(load(&unique("nope")).is_err());
+    }
+    // --- I7 RED→GREEN: workspace name sanitization (path traversal) ---
+    //
+    // `save`/`load` use the workspace `name` verbatim as a filename
+    // (`{name}.json`) under the workspaces dir. A name like `../evil` would
+    // write/read OUTSIDE that dir (path traversal). The fix rejects names that
+    // are empty, contain `/`, `\`, `..`, NUL, or start with a leading `.`.
+    #[test]
+    fn save_rejects_path_traversal_names() {
+        let bad = ["../evil", "a/b", "a\\b", "..", "a..b", ".hidden", "", "x\0y"];
+        for name in bad {
+            let ws = Workspace { name: name.to_string(), files: vec![], queries: vec![] };
+            let res = save(&ws);
+            assert!(res.is_err(), "name {:?} must be rejected (path traversal / control char)", name);
+        }
+        // Regression guard: a legitimate name still saves fine.
+        let good = unique("clean");
+        save(&Workspace { name: good.clone(), files: vec!["a".into()], queries: vec![] }).unwrap();
+        assert!(load(&good).is_ok());
+    }
+    #[test]
+    fn load_rejects_path_traversal_names() {
+        let bad = ["../evil", "a/b", "a\\b", "..", ".hidden", "", "x\0y"];
+        for name in bad {
+            assert!(load(name).is_err(), "load name {:?} must be rejected before touching the fs", name);
+        }
     }
 }

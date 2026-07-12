@@ -17,3 +17,4 @@ logradar-core = { path = "../crates/logradar-core" }
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
+flate2 = "1"
