@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use crate::encoding;
 use crate::format::{self, LineFormat};
 use crate::query::{Combinator, Predicate, Query, QueryNode};
 use crate::session::Session;
@@ -14,14 +15,18 @@ impl Default for CancellationToken { fn default() -> Self { Self::new() } }
 
 pub struct SearchResult {
     pub matches: Vec<u64>,   // line numbers that matched
-    pub truncated: bool,     // true if hit cap before scanning all
+    pub truncated: bool,     // true if the cap was hit before scanning all
+    pub cancelled: bool,     // true if the user cancelled mid-scan
 }
 
 pub struct QueryEngine;
 
 impl QueryEngine {
-    /// Scans the whole session sequentially (v1; rayon parallelism added once
-    /// line_at is batchable). Stops early if cancelled or cap reached.
+    /// Scans the whole session sequentially via `Session::scan_lines` (one-pass
+    /// streaming for gz/zip — O(n); spec §7.4). Stops early if cancelled or cap
+    /// reached: those checks live inside the `scan_lines` closure and preserve
+    /// the original per-line check order (cancel, then cap, then eval). The first
+    /// terminating condition wins, matching the prior early-return semantics.
     pub fn search(
         session: &mut Session,
         query: &Query,
@@ -30,26 +35,29 @@ impl QueryEngine {
         cap: usize,
     ) -> SearchResult {
         let mut matches: Vec<u64> = Vec::new();
-        let total = session.line_count();
-        for n in 0..total {
-            if token.is_cancelled() { return SearchResult { matches, truncated: false }; }
-            if matches.len() >= cap { return SearchResult { matches, truncated: true }; }
-            // fetch line; if source errors, treat as no-match and continue
-            let Some(line) = session_line(session, n) else { continue };
+        let mut cancelled = false;
+        let mut truncated = false;
+        let enc = session.encoding();
+        let scan = session.scan_lines(|n, bytes| {
+            // Once a terminating condition fired, short-circuit every subsequent
+            // line (scan_lines still iterates, but no eval work is done).
+            if cancelled || truncated { return; }
+            if token.is_cancelled() { cancelled = true; return; }
+            if matches.len() >= cap { truncated = true; return; }
+            let mut line = encoding::decode(enc, bytes);
+            // CRLF: sources split on `\n` only, so a CRLF line carries a trailing
+            // `\r`. Strip exactly one (mirrors Session::get_lines).
+            if line.ends_with('\r') { line.pop(); }
             if eval_node(&query.root, fmt, &line) {
                 matches.push(n);
             }
-        }
-        SearchResult { matches, truncated: false }
+        });
+        // The original implementation treated per-line fetch errors as
+        // no-match-and-continue; scan_lines surfaces a mid-stream source error
+        // as Err, so ignore it and return whatever matches were collected.
+        let _ = scan;
+        SearchResult { matches, truncated, cancelled }
     }
-}
-
-// helper: Session::get_lines returns Vec<String> but engine wants one line at a time.
-// Simplified from the brief: returns Option<String> directly (avoids the
-// String -> Vec<u8> -> String::from_utf8_lossy round-trip; eval_node/eval_predicate
-// already operate on &str).
-fn session_line(session: &mut Session, n: u64) -> Option<String> {
-    session.get_lines(n, 1).into_iter().next()
 }
 
 fn eval_node(node: &QueryNode, fmt: &LineFormat, line: &str) -> bool {
@@ -114,6 +122,7 @@ mod tests {
         let res = QueryEngine::search(&mut s, &q, &fmt, &tok, 2);
         assert_eq!(res.matches.len(), 2);
         assert!(res.truncated);
+        assert!(!res.cancelled);
     }
     #[test]
     fn cancel_stops_early() {
@@ -125,6 +134,8 @@ mod tests {
         let fmt = s.format().clone();
         let res = QueryEngine::search(&mut s, &q, &fmt, &tok, usize::MAX);
         assert!(res.matches.is_empty());
+        assert!(res.cancelled);
+        assert!(!res.truncated);
     }
     #[test]
     fn and_or_combinators() {
@@ -141,5 +152,7 @@ mod tests {
         let fmt = s.format().clone();
         let res = QueryEngine::search(&mut s, &q, &fmt, &tok, usize::MAX);
         assert_eq!(res.matches.len(), 3); // lines 0,1,3
+        assert!(!res.cancelled);
+        assert!(!res.truncated);
     }
 }

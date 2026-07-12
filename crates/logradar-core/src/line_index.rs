@@ -80,7 +80,7 @@ mod tests {
         let bytes = txt.into_bytes();
         let idx = LineIndexer::build(&bytes, 256);
         assert_eq!(idx.line_count(), 1000);
-        assert_eq!(idx.line_at(&bytes, 500), Some(format!("line500").as_bytes()));
+        assert_eq!(idx.line_at(&bytes, 500), Some("line500".as_bytes()));
         assert_eq!(idx.line_at(&bytes, 999), Some("line999".as_bytes()));
     }
     #[test]
