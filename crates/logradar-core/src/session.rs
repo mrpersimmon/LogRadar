@@ -70,7 +70,15 @@ impl Session {
         let enc = self.encoding;
         (start..start + count as u64)
             .filter_map(|n| self.line_at(n))
-            .map(|b| encoding::decode(enc, &b))
+            .map(|b| {
+                let mut s = encoding::decode(enc, &b);
+                // CRLF handling: LineIndexer/GzView/Zip all split on `\n` only,
+                // so a CRLF line comes back with a trailing `\r`. Strip exactly
+                // one. LF-only lines are unaffected (`ends_with('\r')` is false).
+                // This is the single chokepoint for all sources.
+                if s.ends_with('\r') { s.pop(); }
+                s
+            })
             .collect()
     }
     fn line_at(&mut self, n: u64) -> Option<Vec<u8>> {
@@ -108,7 +116,13 @@ mod tests {
         p
     }
     fn tempfile() -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("lr-test-{}.log", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Unique per call: tests run in parallel and would otherwise clobber a
+        // path keyed only on PID (a real bug surfaced once a 2nd plain-file test
+        // was added). Counter + PID guarantees uniqueness across threads.
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!("lr-test-{}-{}.log", std::process::id(), n));
         let _ = std::fs::remove_file(&p);
         p
     }
@@ -120,6 +134,18 @@ mod tests {
         let win = s.get_lines(1, 2);
         assert_eq!(win.len(), 2);
         assert!(win[0].contains("ERROR b"));
+    }
+    #[test]
+    fn strips_crlf_trailing_cr_in_plain_file() {
+        // CRLF line endings: LineIndexer splits on \n only, so a decoded line
+        // would carry a trailing \r unless get_lines strips it.
+        let p = write_tmp("2026-07-12 14:22:01 INFO a\r\n2026-07-12 14:22:02 ERROR b\r\n");
+        let mut s = Session::open(&p).unwrap();
+        assert_eq!(s.line_count(), 2);
+        let lines = s.get_lines(0, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("INFO a"));
+        assert!(!lines[0].ends_with('\r'), "line 0 should not end with \\r, got: {:?}", lines[0]);
     }
 }
 
