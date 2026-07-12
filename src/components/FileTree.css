@@ -1,0 +1,101 @@
+/* Sidebar directory tree — ported from main-window-v7.html's sidebar and its
+   token-adapted form in premium-redesign.html, restyled with ③a's premium
+   tokens. No hardcoded colors: every value is a theme token. */
+
+.file-tree {
+  width: 208px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  font-family: var(--font-ui);
+}
+
+.ft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.ft-eyebrow {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ft-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+
+.ft-tree {
+  padding: 6px 6px;
+  flex: 1;
+  overflow: auto;
+}
+.ft-empty {
+  padding: 10px 12px;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.ft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ft-row:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 1.5px var(--scan);
+}
+.ft-caret {
+  width: 12px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.ft-ico {
+  width: 14px;
+  text-align: center;
+  opacity: 0.85;
+}
+.ft-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ft-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.ft-dir:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.ft-file:hover {
+  background: var(--surface-2);
+}
+.ft-file.active {
+  background: var(--scan-soft);
+  color: var(--text);
+}
+.ft-file.active .ft-name {
+  color: var(--text);
+  font-weight: 500;
+}
+.ft-file.active .ft-badge {
+  color: var(--scan);
+  font-weight: 600;
+}

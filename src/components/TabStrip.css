@@ -1,0 +1,59 @@
+/* Top tab strip — ported from tabs-comparison.html option B, restyled with ③a's
+   premium tokens. No hardcoded colors. */
+
+.tab-strip {
+  display: flex;
+  align-items: center;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  overflow-x: auto;
+}
+
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  color: var(--text-dim);
+  cursor: pointer;
+  border-right: 1px solid var(--border-soft);
+  white-space: nowrap;
+  background: transparent;
+}
+.tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1.5px var(--scan);
+}
+.tab-label {
+  font-weight: inherit;
+}
+.tab-close {
+  color: var(--text-faint);
+  font-size: 10px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  padding: 0 1px;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.tab-close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.tab:hover:not(.on) {
+  color: var(--text);
+  background: var(--surface-3);
+}
+.tab.on {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--scan);
+  font-weight: 500;
+}
+.tab.on .tab-close {
+  color: var(--text-dim);
+}
