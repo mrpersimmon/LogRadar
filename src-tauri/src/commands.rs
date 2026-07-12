@@ -211,6 +211,68 @@ pub async fn cancel_search(state: State<'_, AppState>, session_id: String) -> Re
     Ok(state.cancel_search(&session_id))
 }
 
+use std::io::Write;
+
+pub fn export_impl(
+    entry: &crate::state::SessionEntry,
+    query: &logradar_core::Query,
+    fmt: &logradar_core::LineFormat,
+    columns: &[String],
+    target: &str,
+) -> Result<u64, String> {
+    let mut session = entry.session.lock().map_err(|e| e.to_string())?;
+    let mut out = std::fs::File::create(target).map_err(|e| e.to_string())?;
+    let token = logradar_core::CancellationToken::new(); // export isn't user-cancelable in v1
+    let cols: Vec<&str> = columns.iter().map(|s| s.as_str()).collect();
+    // Resolution: the brief's closure called `session.get_lines(n, 1)` inside the
+    // `search_stream` callback, but `search_stream` already holds `&mut *session`
+    // for the duration of the scan (E0499 — cannot borrow `session` as mutable
+    // more than once). The callback only receives the line number (`FnMut(u64)`),
+    // so we cannot fetch the decoded line mid-scan. Collect matching line numbers
+    // during the single-pass scan (callback borrows only the Vec, not `session`),
+    // then fetch+format+write each match AFTER the scan's `&mut` borrow ends.
+    let mut matches: Vec<u64> = Vec::new();
+    let res = logradar_core::QueryEngine::search_stream(&mut *session, query, fmt, &token, usize::MAX, |n| {
+        matches.push(n);
+    });
+    let _ = res;
+    let mut count: u64 = 0;
+    for n in matches {
+        let line = session.get_lines(n, 1).into_iter().next().unwrap_or_default();
+        let row = format_row(&cols, n, &line);
+        let _ = writeln!(out, "{row}");
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn format_row(cols: &[&str], line_no: u64, line: &str) -> String {
+    // v1: just join the requested column values; "msg" = the whole decoded line, "no" = line number
+    cols.iter().map(|c| match *c {
+        "no" => line_no.to_string(),
+        "msg" => line.to_string(),
+        other => other.to_string(), // passthrough for path/level/timestamp in v1 (full refine later)
+    }).collect::<Vec<_>>().join("\t")
+}
+
+#[tauri::command]
+pub async fn export(
+    state: State<'_, AppState>,
+    session_id: String,
+    query: serde_json::Value,
+    columns: Vec<String>,
+    target: String,
+) -> Result<u64, String> {
+    let entry = state.get(&session_id).ok_or("session not found")?;
+    // Brief's `serde_json::from_value::<Query>(query)` can't compile (core `Query`
+    // is serde-free); reuse Task 6's `SearchRequest` DTO + `into_query()` — same
+    // bridge the `search` command uses. Do NOT duplicate the DTO here.
+    let req: SearchRequest = serde_json::from_value(query).map_err(|e| e.to_string())?;
+    let query: logradar_core::Query = req.into_query()?;
+    let fmt = { let s = entry.session.lock().map_err(|e| e.to_string())?; s.format().clone() };
+    export_impl(&entry, &query, &fmt, &columns, &target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +351,27 @@ mod search_tests {
         assert_eq!(total_matched, 200);
         assert!(batches >= 3, "200 matches / 64 batch => >=3 batches");
         assert!(events.iter().any(|e| matches!(e, SearchEvent::Done{..})));
+    }
+}
+
+#[cfg(test)]
+mod export_tests {
+    use super::*;
+    use crate::state::AppState;
+    use logradar_core::{Query, QueryNode, Predicate};
+    #[test]
+    fn export_writes_matching_lines_to_file() {
+        let state = AppState::default();
+        let p = std::env::temp_dir().join(format!("lr-exp-src-{}.log", uuid::Uuid::new_v4()));
+        std::fs::write(&p, "INFO a\nERROR hit one\nERROR hit two\nWARN x\n").unwrap();
+        let id = open_file_impl(&state, p.to_str().unwrap()).unwrap().session_id;
+        let entry = state.get(&id).unwrap();
+        let fmt = entry.session.lock().unwrap().format().clone();
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+        let target = std::env::temp_dir().join(format!("lr-exp-out-{}.log", uuid::Uuid::new_v4()));
+        let n = export_impl(&entry, &q, &fmt, &["no".to_string(), "msg".to_string()], target.to_str().unwrap()).unwrap();
+        assert_eq!(n, 2);
+        let written = std::fs::read_to_string(&target).unwrap();
+        assert!(written.contains("hit one") && written.contains("hit two"));
     }
 }

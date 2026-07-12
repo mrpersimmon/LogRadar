@@ -4,7 +4,7 @@ pub mod state;
 pub fn run() {
     tauri::Builder::default()
         .manage(state::AppState::default())
-        .invoke_handler(tauri::generate_handler![commands::ping, commands::open_file, commands::get_lines, commands::search, commands::cancel_search])
+        .invoke_handler(tauri::generate_handler![commands::ping, commands::open_file, commands::get_lines, commands::search, commands::cancel_search, commands::export])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
