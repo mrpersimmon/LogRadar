@@ -1,0 +1,143 @@
+/* VirtualLogView — ported from the log-view section of main-window-v7.html
+   and its token-adapted form in premium-redesign.html. Every color is a theme
+   token (③a's tokens.css); the hit mark uses --hit-bg/--hit-fg added there. */
+
+.log-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.log-viewport {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* Tall as totalLines * rowHeight so the scrollbar reflects the whole file. */
+.log-spacer {
+  position: relative;
+  width: 100%;
+}
+
+/* Visible rows are absolutely positioned at chunk.start * rowHeight inside
+   the spacer, so the scroll offset is preserved while only visible rows
+   render. */
+.log-rows {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+.ln {
+  display: flex;
+  align-items: baseline;
+  padding: 0 14px;
+  box-sizing: border-box;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ln:hover {
+  background: var(--surface-2);
+}
+
+.ln .no {
+  width: 54px;
+  text-align: right;
+  padding-right: 14px;
+  color: var(--text-faint);
+  flex-shrink: 0;
+  user-select: none;
+}
+.ln .ts {
+  width: 96px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.ln .lv {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 60px;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 11px;
+}
+.ln .pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.ln .lv.error,
+.ln .lv.fatal {
+  color: var(--err);
+}
+.ln .lv.error .pip,
+.ln .lv.fatal .pip {
+  background: var(--err);
+}
+.ln .lv.warn {
+  color: var(--warn);
+}
+.ln .lv.warn .pip {
+  background: var(--warn);
+}
+.ln .lv.info {
+  color: var(--info);
+}
+.ln .lv.info .pip {
+  background: var(--info);
+}
+.ln .lv.debug,
+.ln .lv.trace {
+  color: var(--debug);
+}
+.ln .lv.debug .pip,
+.ln .lv.trace .pip {
+  background: var(--debug);
+}
+
+.ln .msg {
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hit mark: highlights the query term inside a hit line's message. */
+mark.hit {
+  background: var(--hit-bg);
+  color: var(--hit-fg);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 500;
+}
+
+/* Hit line: a line whose number is in the active search's match set. */
+.ln.hit {
+  border-left: 2px solid var(--scan);
+  background: var(--scan-soft);
+}
+
+/* Jump target: the line the user just jumped to. */
+.ln.jump {
+  background: linear-gradient(90deg, var(--scan-soft), transparent 70%);
+  box-shadow: inset 2px 0 0 var(--scan);
+}
+.ln.jump .no {
+  color: var(--scan);
+}
+.ln.jump .tag {
+  font-size: 10px;
+  color: var(--scan);
+  margin-left: 8px;
+  font-family: var(--font-ui);
+}
