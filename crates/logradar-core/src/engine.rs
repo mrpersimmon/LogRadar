@@ -87,11 +87,19 @@ impl QueryEngine {
         let mut matched: u64 = 0;
         let mut cancelled = false;
         let mut truncated = false;
-        let total = session.line_count();
+        // Hoist the Copy encoding before `scan_lines` takes `&mut session`
+        // (the `&session.encoding()` borrow ends here). `scan_lines` yields RAW
+        // bytes; decode per-line via `encoding::decode(enc, bytes)` + single
+        // trailing `\r` strip, mirroring `Session::get_lines`. Using
+        // `String::from_utf8_lossy` here mangles GBK (中文) logs into U+FFFD
+        // garbage, breaking text/regex predicates on non-UTF-8 lines (spec
+        // §7.4 supports GBK logs).
+        let enc = session.encoding();
         let scan_result = session.scan_lines(|n, bytes| {
             if token.is_cancelled() { return false; }                  // early-stop
             if matched >= cap as u64 { truncated = true; return false; }
-            let line = String::from_utf8_lossy(bytes);
+            let mut line = encoding::decode(enc, bytes);
+            if line.ends_with('\r') { line.pop(); }
             if eval_node(&query.root, fmt, &line) { on_match(n); matched += 1; }
             true
         });
@@ -216,6 +224,24 @@ mod stream_tests {
         f.write_all(content.as_bytes()).unwrap();
         p
     }
+    fn write_tmp_bytes(content: &[u8]) -> std::path::PathBuf {
+        // Unique per call: tests run in parallel and would otherwise clobber a
+        // path keyed only on PID (same bug engine::tests/stream_tests already
+        // fixed). Counter + PID guarantees uniqueness across threads. Raw-byte
+        // variant for GBK-encoded fixtures that aren't valid UTF-8 as written.
+        // DISTINCT prefix (`-bin-`) from `write_tmp`'s `lr-stream-`: the two
+        // helpers keep independent counters, so a shared prefix would make
+        // counter-slot 0 from each collide (one test clobbers the other's file
+        // before its `Session::open`).
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!("lr-stream-bin-{}-{}.log", std::process::id(), n));
+        let _ = std::fs::remove_file(&p);
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(content).unwrap();
+        p
+    }
     #[test]
     fn search_stream_emits_matches_during_scan() {
         let p = write_tmp("INFO a\nERROR hit\nERROR hit\nWARN x\nERROR hit\n");
@@ -253,5 +279,27 @@ mod stream_tests {
         let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
         assert!(got.is_empty());
         assert!(res.cancelled);
+    }
+    #[test]
+    fn search_stream_decodes_gbk_lines() {
+        // GBK-encoded Chinese log line `连接错误 hit`. `String::from_utf8_lossy`
+        // on the raw GBK bytes mangles `连接错误` into U+FFFD replacement chars,
+        // so a `Text("错误")` query finds NO match — proving the search_stream
+        // closure must decode via `encoding::decode(enc, bytes)` + CRLF strip
+        // (mirroring `Session::get_lines`), not `from_utf8_lossy`. RED before the
+        // fix (from_utf8_lossy → no match), GREEN after (GBK decode → match).
+        let gbk_bytes = encoding_rs::GBK.encode("连接错误 hit\nINFO ok\n").0.into_owned();
+        let p = write_tmp_bytes(&gbk_bytes);
+        let mut s = Session::open(&p).unwrap();
+        assert_eq!(encoding::Encoding::Gbk, s.encoding(),
+            "Session::open must detect GBK for non-UTF-8 Chinese bytes");
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("错误".into()))).unwrap();
+        let tok = CancellationToken::new();
+        let fmt = s.format().clone();
+        let mut got = Vec::new();
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        assert_eq!(got, vec![0], "GBK-decoded line 0 must match Text(\"错误\")");
+        assert_eq!(res.matched, 1);
+        assert!(!res.cancelled && !res.truncated);
     }
 }
