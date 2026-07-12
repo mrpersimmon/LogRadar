@@ -1,0 +1,17 @@
+[package]
+name = "logradar-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+
+[dependencies]
+regex = "1"
+flate2 = "1"
+zip = "0.6"
+memmap2 = "0.9"
+rayon = "1"
+encoding_rs = "0.8"
+chrono = "0.4"
+
+[dev-dependencies]
+proptest = "1"
