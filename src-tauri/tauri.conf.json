@@ -4,6 +4,17 @@
   "version": "0.1.0",
   "identifier": "com.logradar.app",
   "build": { "frontendDist": "../dist", "devUrl": "http://localhost:5173" },
-  "app": { "windows": [], "security": { "csp": null } },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "LogRadar",
+        "width": 1280,
+        "height": 800,
+        "resizable": true
+      }
+    ],
+    "security": { "csp": null }
+  },
   "plugins": {}
 }
