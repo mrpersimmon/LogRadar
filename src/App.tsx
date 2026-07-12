@@ -1,4 +1,5 @@
 import { AppShell } from "./components/AppShell";
+import { WelcomePage } from "./pages/WelcomePage";
 export function App() {
-  return <AppShell><div style={{ padding: 24 }} /></AppShell>;
+  return <AppShell><WelcomePage /></AppShell>;
 }
