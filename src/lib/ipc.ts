@@ -144,6 +144,17 @@ function createSearchController(
     getSnapshot: () => matches,
     getStatus: () => status,
     async run() {
+      // I1: reset matches on (re)run. The controller is a singleton keyed on
+      // (sessionId, query, cap), so re-running the SAME query (via SearchPanel
+      // history ◀▶▾ or re-clicking Search with an unchanged form) reuses this
+      // controller whose `matches` still hold the prior run. Without this
+      // reset, new batches would append onto the old → duplicate, ever-growing
+      // results + inflated "N 命中". A fresh empty array (not in-place
+      // `matches.length = 0`) gives a NEW reference so `useSyncExternalStore`
+      // sees a changed snapshot and re-renders. Notify so subscribers see the
+      // reset before status flips to "running".
+      matches = [];
+      notify();
       status = "running";
       notify();
       channel = new Channel<SearchEvent>();

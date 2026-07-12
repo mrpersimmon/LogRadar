@@ -99,6 +99,15 @@
 .ed-seg-btn:hover:not(.on) {
   color: var(--text);
 }
+/* I2: "current-query" range is disabled until ④ lifts `useSearch` to App —
+ * greyed out + non-interactive. */
+.ed-seg-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ed-seg-btn:disabled:hover {
+  color: var(--text-dim);
+}
 .ed-checks {
   display: flex;
   flex-wrap: wrap;

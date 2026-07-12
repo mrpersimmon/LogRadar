@@ -12,6 +12,7 @@
 
 import { useState } from "react";
 import { exportFile } from "../lib/ipc";
+import type { SearchRequest } from "../components/SearchPanel";
 import "./ExportDialog.css";
 
 export type ExportRange = "current-query" | "current-file" | "selection" | "all";
@@ -31,12 +32,38 @@ export type ExportDialogProps = {
   onClose?: () => void;
 };
 
-const RANGES: { value: ExportRange; label: string }[] = [
-  { value: "current-query", label: "Current query" },
+// I2: the "current-query" range needs the active search query, which isn't
+// available until ④ lifts `useSearch` to App (I4). Until then the option is
+// DISABLED (greyed out + tooltip) so an invalid payload can't be sent.
+type RangeOption = {
+  value: ExportRange;
+  label: string;
+  disabled?: boolean;
+  title?: string;
+};
+
+const RANGES: RangeOption[] = [
+  {
+    value: "current-query",
+    label: "Current query",
+    disabled: true,
+    title: "available after search-state lift in ④",
+  },
   { value: "current-file", label: "Current file" },
   { value: "selection", label: "Selection" },
   { value: "all", label: "All open files" },
 ];
+
+// I2: `exportFile`'s 2nd arg is the `query` the Rust `export` command
+// deserializes into `SearchRequest` (requires `{root: QueryNodeDto}` — see
+// src-tauri/src/commands.rs). Pre-fix the dialog sent `{range, format}` which
+// has no `root` → serde_json::from_value fails → export always errored. For
+// the ranges that don't need the active query (current-file / selection /
+// all) send a match-all SearchRequest — empty text matches every line via
+// `line.contains("")`. The "current-query" range is disabled until ④.
+const MATCH_ALL_QUERY: SearchRequest = {
+  root: { kind: "leaf", predicate: { kind: "text", text: "" } },
+};
 
 const FORMATS: { value: ExportFormat; label: string }[] = [
   { value: "raw", label: "Raw" },
@@ -86,7 +113,9 @@ function todayStamp(): string {
 }
 
 export function ExportDialog({ sessionId, onClose }: ExportDialogProps) {
-  const [range, setRange] = useState<ExportRange>("current-query");
+  // I2: default range is "current-file" — "current-query" is disabled until ④
+  // lifts `useSearch` to App (the active query isn't available here yet).
+  const [range, setRange] = useState<ExportRange>("current-file");
   const [format, setFormat] = useState<ExportFormat>("raw");
   const [cols, setCols] = useState<Record<ExportColumn, boolean>>({
     lineNumber: true,
@@ -122,9 +151,13 @@ export function ExportDialog({ sessionId, onClose }: ExportDialogProps) {
     const targetStr = target === "file" ? path : "clipboard";
     setExporting(true);
     try {
+      // I2: send a VALID SearchRequest ({root:{...}}) the Rust `export` command
+      // can deserialize — NOT `{range, format}` (no `root` → serde fails →
+      // export always errors). All selectable ranges use the match-all query;
+      // "current-query" (which would send the active query) is disabled until ④.
       const written = await exportFile(
         sessionId,
-        { range, format },
+        MATCH_ALL_QUERY,
         selectedColumns,
         targetStr,
       );
@@ -165,6 +198,8 @@ export function ExportDialog({ sessionId, onClose }: ExportDialogProps) {
                   key={r.value}
                   className={`ed-seg-btn${range === r.value ? " on" : ""}`}
                   aria-pressed={range === r.value}
+                  disabled={r.disabled}
+                  title={r.title}
                   onClick={() => setRange(r.value)}
                 >
                   {r.label}

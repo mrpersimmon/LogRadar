@@ -130,6 +130,39 @@ describe("search controller accumulates batches", () => {
     expect(ctrl.matches).toEqual([]);
     expect(listener).toHaveBeenCalled();
   });
+
+  // I1: the controller is a singleton keyed on (sessionId, query, cap), so
+  // re-running the SAME query (via SearchPanel history ◀▶▾ or re-clicking
+  // Search with an unchanged form) reuses the controller whose `matches`
+  // still hold the prior run. Without a reset at the top of run(), new batches
+  // append onto the old → duplicate, ever-growing results + inflated "N 命中".
+  // run() must reset `matches = []` (a fresh array — referentially stable for
+  // useSyncExternalStore) BEFORE the second run's batches arrive.
+  it("resets matches on re-run (no duplicate accumulation across runs)", async () => {
+    invokeMock.mockImplementation(async () => {});
+    const ctrl = getSearchController("s-rerun", { root: {} }, 100);
+
+    // First run → one batch → done.
+    await ctrl.run();
+    const ch1 = lastChannel();
+    ch1!.onmessage!({ kind: "batch", matches: [1] });
+    expect(ctrl.matches).toEqual([1]);
+    ch1!.onmessage!({ kind: "done", matched: 1, cancelled: false, truncated: false });
+    expect(ctrl.status).toBe("done");
+
+    // Second run of the SAME query reuses the controller (same registry key).
+    // matches MUST be reset to [] before the second run's batches arrive.
+    await ctrl.run();
+    expect(ctrl.matches).toEqual([]); // RESET on re-run (fails pre-fix: still [1])
+    expect(ctrl.status).toBe("running");
+
+    // A fresh channel is created each run; the second run's batch must append
+    // onto the EMPTY array, not onto the prior run's [1].
+    const ch2 = lastChannel();
+    expect(ch2).not.toBe(ch1);
+    ch2!.onmessage!({ kind: "batch", matches: [2, 3] });
+    expect(ctrl.matches).toEqual([2, 3]); // NOT [1, 2, 3] (pre-fix accumulation)
+  });
 });
 
 // Prove the React hook wiring (useSyncExternalStore) actually re-renders the
