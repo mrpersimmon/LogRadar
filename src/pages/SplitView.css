@@ -1,0 +1,318 @@
+/* SplitView — ported from split-view-v3.html (two panes + center time-sync
+   gutter + 同滚/容差/对齐 controls + Δ indicator). Every color is a ③a theme
+   token (src/theme/tokens.css); teal = within tolerance (--scan), amber =
+   exceeds tolerance / 超差 (--warn). No hardcoded colors. */
+
+.sv {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border-soft);
+}
+
+/* —— toolbar: 同滚 toggle · 对齐 · 容差 input + presets —————————————— */
+.sv-tool {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  flex-wrap: wrap;
+}
+
+/* 同滚 switch (on = scan-teal, off = faint) */
+.sv-sync-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  user-select: none;
+}
+.sv-sync-toggle .sv-sw {
+  width: 30px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.18s, border-color 0.18s;
+}
+.sv-sync-toggle .sv-sw::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  transition: left 0.18s, background 0.18s;
+}
+.sv-sync-toggle.on {
+  color: var(--scan);
+}
+.sv-sync-toggle.on .sv-sw {
+  background: var(--scan);
+  border-color: var(--scan);
+}
+.sv-sync-toggle.on .sv-sw::after {
+  left: 15px;
+  background: #06231f;
+}
+
+.sv-align {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.sv-align select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+}
+.sv-align select:hover {
+  border-color: var(--scan);
+}
+
+.sv-tol {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.sv-tol.over {
+  color: var(--warn);
+}
+.sv-tol-input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 5px;
+  min-width: 56px;
+  text-align: center;
+}
+.sv-tol.over .sv-tol-input {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 50%, var(--border));
+}
+.sv-tol-input:focus {
+  outline: none;
+  border-color: var(--scan);
+}
+.sv-tol-unit {
+  color: var(--text-faint);
+}
+
+.sv-presets {
+  display: inline-flex;
+  gap: 4px;
+}
+.sv-preset {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 2px 7px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.sv-preset:hover {
+  border-color: var(--scan);
+  color: var(--scan);
+}
+.sv-preset.active {
+  border-color: var(--scan);
+  color: var(--scan);
+  background: var(--scan-soft);
+}
+
+/* —— panes ——————————————————————————————————————————————————————— */
+.sv-panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.sv-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sv-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--surface-2);
+}
+.sv-side {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--scan);
+  border: 1px solid color-mix(in srgb, var(--scan) 45%, transparent);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.sv-path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sv-path .sv-dim {
+  color: var(--text-faint);
+}
+.sv-cnt {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.sv-enc {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+.sv-pane-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* —— center time-sync gutter —————————————————————————————— */
+.sv-gutter {
+  width: 56px;
+  background: var(--surface-2);
+  border-left: 1px solid var(--border-soft);
+  border-right: 1px solid var(--border-soft);
+  position: relative;
+  flex-shrink: 0;
+}
+.sv-gutter-axis {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--border);
+}
+.sv-gtick {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+.sv-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+.sv-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.sv-dot.within {
+  background: var(--scan);
+  box-shadow: 0 0 8px var(--scan);
+}
+.sv-dot.over {
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+.sv-times {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.sv-t {
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface);
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border-soft);
+  color: var(--text-dim);
+}
+.sv-t .sv-lbl {
+  color: var(--text-faint);
+  margin-right: 3px;
+  font-weight: 500;
+}
+.sv-delta {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+.sv-delta.within {
+  color: var(--scan);
+  background: var(--scan-soft);
+  border: 1px solid color-mix(in srgb, var(--scan) 45%, transparent);
+}
+.sv-delta.over {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+
+/* —— status bar ————————————————————————————————————————————— */
+.sv-status {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 5px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--surface);
+}
+.sv-status-delta.within {
+  color: var(--scan);
+}
+.sv-status-delta.over {
+  color: var(--warn);
+}
