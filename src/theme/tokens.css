@@ -5,6 +5,8 @@
   --scan:#45C6B8; --scan-soft:rgba(69,198,184,.14); --scan-line:rgba(69,198,184,.55);
   --err:#E8586A; --warn:#E8A13C; --info:#5B9DD9; --debug:#7A828D;
   --shadow:0 18px 50px rgba(0,0,0,.55);
+  --font-ui:'Space Grotesk', system-ui, sans-serif;
+  --font-mono:'IBM Plex Mono', 'SF Mono', Menlo, monospace;
 }
 [data-theme="light"] {
   --bg:#EEF0F3; --surface:#FFFFFF; --surface-2:#F5F6F8; --surface-3:#E9EBEF;
@@ -13,5 +15,7 @@
   --scan:#1E8A7C; --scan-soft:rgba(30,138,124,.12); --scan-line:rgba(30,138,124,.5);
   --err:#C93A4E; --warn:#B5712A; --info:#2E6FA0; --debug:#6A727C;
   --shadow:0 18px 50px rgba(20,30,50,.16);
+  --font-ui:'Space Grotesk', system-ui, sans-serif;
+  --font-mono:'IBM Plex Mono', 'SF Mono', Menlo, monospace;
 }
-html, body { margin:0; background:var(--bg); color:var(--text); font-family:'Space Grotesk',system-ui,sans-serif; }
+html, body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font-ui); }
