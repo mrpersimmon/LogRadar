@@ -31,6 +31,17 @@ pub async fn open_file(state: State<'_, AppState>, path: String) -> Result<OpenR
     open_file_impl(&state, &path)
 }
 
+pub fn get_lines_impl(state: &AppState, session_id: &str, start: u64, count: usize) -> Result<Vec<String>, String> {
+    let entry = state.get(session_id).ok_or("session not found".to_string())?;
+    let mut session = entry.session.lock().map_err(|e| e.to_string())?;
+    Ok(session.get_lines(start, count))
+}
+
+#[tauri::command]
+pub async fn get_lines(state: State<'_, AppState>, session_id: String, start: u64, count: usize) -> Result<Vec<String>, String> {
+    get_lines_impl(&state, &session_id, start, count)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,5 +66,29 @@ mod tests {
         let state = AppState::default();
         let err = open_file_impl(&state, "/nonexistent/path.log").unwrap_err();
         assert!(!err.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod get_lines_tests {
+    use super::*;
+    use crate::state::AppState;
+    fn open_tmp(state: &AppState, content: &str) -> String {
+        let p = std::env::temp_dir().join(format!("lr-gl-{}.log", uuid::Uuid::new_v4()));
+        std::fs::write(&p, content).unwrap();
+        open_file_impl(state, p.to_str().unwrap()).unwrap().session_id
+    }
+    #[test]
+    fn get_lines_returns_window() {
+        let state = AppState::default();
+        let id = open_tmp(&state, "2026-07-12 14:22:01 INFO a\n2026-07-12 14:22:02 ERROR b\n2026-07-12 14:22:03 WARN c\n");
+        let win = get_lines_impl(&state, &id, 1, 2).unwrap();
+        assert_eq!(win.len(), 2);
+        assert!(win[0].contains("ERROR b"));
+    }
+    #[test]
+    fn get_lines_unknown_session_errors() {
+        let state = AppState::default();
+        assert!(get_lines_impl(&state, "nope", 0, 1).is_err());
     }
 }
