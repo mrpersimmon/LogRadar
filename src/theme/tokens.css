@@ -1,0 +1,17 @@
+[data-theme="dark"] {
+  --bg:#0B0E13; --surface:#11151C; --surface-2:#161C25; --surface-3:#1B222D;
+  --border:#232B37; --border-soft:#1A2029;
+  --text:#DCE3EC; --text-dim:#8A94A3; --text-faint:#565F6D;
+  --scan:#45C6B8; --scan-soft:rgba(69,198,184,.14); --scan-line:rgba(69,198,184,.55);
+  --err:#E8586A; --warn:#E8A13C; --info:#5B9DD9; --debug:#7A828D;
+  --shadow:0 18px 50px rgba(0,0,0,.55);
+}
+[data-theme="light"] {
+  --bg:#EEF0F3; --surface:#FFFFFF; --surface-2:#F5F6F8; --surface-3:#E9EBEF;
+  --border:#D9DEE5; --border-soft:#E3E7EC;
+  --text:#161B22; --text-dim:#565E6B; --text-faint:#8A93A0;
+  --scan:#1E8A7C; --scan-soft:rgba(30,138,124,.12); --scan-line:rgba(30,138,124,.5);
+  --err:#C93A4E; --warn:#B5712A; --info:#2E6FA0; --debug:#6A727C;
+  --shadow:0 18px 50px rgba(20,30,50,.16);
+}
+html, body { margin:0; background:var(--bg); color:var(--text); font-family:'Space Grotesk',system-ui,sans-serif; }
