@@ -1,0 +1,81 @@
+/* SyntaxHighlighter — ported from the `.ln` line-rendering of
+   premium-redesign.html (ts / lv.err + pip / msg / mark.hit), restyled with
+   ③a's premium CSS-variable tokens (no hardcoded colors). Scoped under
+   `.sh-line` so it stays self-contained and never collides with
+   VirtualLogView's `.ln` rules. */
+
+.sh-line {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  white-space: nowrap;
+}
+
+.sh-line .ts {
+  width: 96px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.sh-line .lv {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: 60px;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 11px;
+}
+.sh-line .pip {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.sh-line .lv.error,
+.sh-line .lv.fatal {
+  color: var(--err);
+}
+.sh-line .lv.error .pip,
+.sh-line .lv.fatal .pip {
+  background: var(--err);
+}
+.sh-line .lv.warn {
+  color: var(--warn);
+}
+.sh-line .lv.warn .pip {
+  background: var(--warn);
+}
+.sh-line .lv.info {
+  color: var(--info);
+}
+.sh-line .lv.info .pip {
+  background: var(--info);
+}
+.sh-line .lv.debug,
+.sh-line .lv.trace {
+  color: var(--debug);
+}
+.sh-line .lv.debug .pip,
+.sh-line .lv.trace .pip {
+  background: var(--debug);
+}
+
+.sh-line .msg {
+  color: var(--text);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Hit mark: highlights a query term inside a hit line's message. */
+.sh-line mark.hit {
+  background: var(--hit-bg);
+  color: var(--hit-fg);
+  border-radius: 3px;
+  padding: 0 3px;
+  font-weight: 500;
+}

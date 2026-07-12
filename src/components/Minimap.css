@@ -1,0 +1,76 @@
+/* Minimap — the signature signal-trace strip. Ported verbatim-in-spirit from
+   the `.trace` element of premium-redesign.html: a thin vertical strip with a
+   centered baseline (`::before`), level-colored blips positioned along it, and
+   a teal scan-window marker (`.sweep`) over the current viewport. Every color
+   is a ③a premium theme token (no hardcoded colors). */
+
+.trace {
+  width: 30px;
+  border-left: 1px solid var(--border-soft);
+  background: var(--surface-2);
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* The vertical baseline running down the strip's middle. */
+.trace::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+}
+
+/* A level blip: a 2px-tall dash centered on the baseline, colored by level.
+   `top` + `width` come from inline style (relative line + intensity). */
+.blip {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 2px;
+  border-radius: 1px;
+}
+.blip.err,
+.blip.fatal {
+  background: var(--err);
+}
+.blip.warn {
+  background: var(--warn);
+}
+.blip.info {
+  background: var(--info);
+}
+.blip.debug,
+.blip.trace {
+  background: var(--debug);
+}
+
+/* The scan-window viewport marker: a teal-tinted rectangle over the current
+   `[viewportStart, viewportEnd)` range. `min-height` keeps it visible even
+   when the viewport is a tiny fraction of a huge file (its `top` still tracks
+   the real scroll position). */
+.sweep {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px solid var(--scan-line);
+  background: var(--scan-soft);
+  border-radius: 3px;
+  min-height: 10px;
+}
+
+.trace-label {
+  position: absolute;
+  bottom: 4px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  pointer-events: none;
+}
