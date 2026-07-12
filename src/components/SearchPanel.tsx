@@ -29,7 +29,7 @@
 // — the inner branch uses the user's combinator; the outer is always AND.
 
 import { useEffect, useRef, useState } from "react";
-import { useSearch, getLines, type SearchStatus } from "../lib/ipc";
+import { useSearch, useCrossFileSearch, getLines, type SearchStatus } from "../lib/ipc";
 import { SearchHistory } from "./SearchHistory";
 import "./SearchPanel.css";
 
@@ -92,14 +92,18 @@ export type SearchControllerView = {
 export type SearchPanelProps = {
   sessionId: string;
   /** Path label for the active session's file (resolved by the caller from
-   *  `useSessions`); falls back to sessionId when absent. */
+   *  `useSessions`); falls back to sessionId when absent. Used for the active
+   *  session's row label in both single-session and cross-file modes. */
   filePath?: string;
   cap?: number;
   /** Lifted controller from App (controlled mode). When provided, SearchPanel
    *  consumes its matches/status/run/cancel instead of a local useSearch. When
    *  absent, SearchPanel falls back to a local useSearch (standalone/test mode).
    *  The controller registry dedupes by (sessionId, query, cap), so the two
-   *  paths never trigger duplicate scans — they resolve to the SAME controller. */
+   *  paths never trigger duplicate scans — they resolve to the SAME controller.
+   *  In cross-file mode (`sessionIds` provided), this controller still owns the
+   *  active session's matches → VirtualLogView hits (the slot for the active
+   *  session in `useCrossFileSearch` resolves to the SAME singleton). */
   search?: SearchControllerView;
   /** Lifted query setter from App. SearchPanel calls this with the built query
    *  when the user runs a search (Search click / history ◀▶▾), so App's
@@ -109,6 +113,15 @@ export type SearchPanelProps = {
    *  MainWindow can mark + scroll VirtualLogView to it (the jump half of the
    *  search→view loop). */
   onJumpToLine?: (line: number) => void;
+  /** All open session ids (cross-file mode, spec B4). When provided,
+   *  SearchPanel runs `useCrossFileSearch` across ALL of them and renders one
+   *  flat row per session with hits (`path · N 命中`) — Notepad++ Find-in-Files
+   *  style. When absent, SearchPanel stays single-session (the active session
+   *  only) for standalone/test compatibility. */
+  sessionIds?: string[];
+  /** Resolves a session id → its file-path label, used to label each flat row
+   *  in cross-file mode. Falls back to the session id when a path is unknown. */
+  filePathFor?: (sessionId: string) => string | undefined;
 };
 
 // ---------- pure logic (exported for direct unit testing) ----------
@@ -218,6 +231,12 @@ export const EMPTY_QUERY: SearchRequest = {
   root: { kind: "leaf", predicate: { kind: "text", text: "" } },
 };
 
+/** A stable empty session-id list for the `useCrossFileSearch` call when
+ *  SearchPanel is in single-session mode (no `sessionIds` prop). Reusing one
+ *  constant avoids creating a new array each render (which would otherwise be
+ *  harmless — the hook's sentinel slots are stable — but this keeps it tidy). */
+const EMPTY_SID_LIST: string[] = [];
+
 /** Walk the query tree; return the first `text` predicate's term. Used by App
  *  to derive VirtualLogView's `highlightTerm` (the keyword wrapped in
  *  `<mark class="hit">` inside matched lines) from the active SearchRequest.
@@ -250,13 +269,19 @@ export function SearchPanel({
   search,
   setActiveQuery,
   onJumpToLine,
+  sessionIds,
+  filePathFor,
 }: SearchPanelProps): React.ReactElement {
   const [form, setForm] = useState<QueryForm>(EMPTY_FORM);
   const [kwInput, setKwInput] = useState("");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1); // -1 = none selected
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [expanded, setExpanded] = useState(false);
+  // expandedId: the session id of the currently-expanded flat row (null =
+  // none). Replaces the old boolean `expanded` so cross-file mode can track
+  // WHICH session's row is open (one row per matched file). Single-session
+  // mode collapses to expandedId === sessionId.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lineContent, setLineContent] = useState<string | null>(null);
   // runTick: an explicit "please run now" signal. The effect below fires ONLY on
   // this tick (not on every query/form change), so editing the form doesn't
@@ -267,12 +292,13 @@ export function SearchPanel({
   const [runTick, setRunTick] = useState(0);
   const lastRunSig = useRef<string | null>(null); // guards overlapping same-query scans
 
-  // Reset history when the session changes (history is session-scoped, in-memory).
+  // Reset history + expansion when the active session changes (history is
+  // session-scoped, in-memory).
   useEffect(() => {
     setHistory([]);
     setHistoryIndex(-1);
     setHistoryOpen(false);
-    setExpanded(false);
+    setExpandedId(null);
     setLineContent(null);
     setForm(EMPTY_FORM);
     lastRunSig.current = null;
@@ -285,23 +311,51 @@ export function SearchPanel({
   // the local call in controlled mode resolves to the SAME controller App owns
   // — the two paths never trigger duplicate scans.
   const local = useSearch(sessionId, query, cap);
-  const { matches, status, run, cancel } = search ?? local;
+  const active = search ?? local;
+  // Cross-file aggregation: when `sessionIds` is provided, run useSearch per
+  // open session (the registry dedupes the active session's slot to the SAME
+  // singleton `active`/App's lifted controller owns — no duplicate scan) and
+  // aggregate into flat per-session results. Always called (hooks rule); when
+  // `sessionIds` is absent it aggregates zero sessions.
+  const cross = useCrossFileSearch(sessionIds ?? EMPTY_SID_LIST, query, cap);
+  const crossMode = !!sessionIds && sessionIds.length > 0;
+  // One row per session (cross-file) — or a single active-session row
+  // (single-session fallback). The active session's row uses `active`'s
+  // matches so it stays referentially identical to App's lifted controller.
+  const rows: { sessionId: string; matches: number[]; status: SearchStatus }[] =
+    crossMode
+      ? cross.results
+      : [{ sessionId, matches: active.matches, status: active.status }];
+  const totalHits = rows.reduce((s, r) => s + r.matches.length, 0);
+  const anyRunning = rows.some((r) => r.status === "running");
+  const allDone = rows.length > 0 && rows.every((r) => r.status === "done");
+  // In cross-file mode, run/cancel fan out to ALL sessions; in single-session
+  // mode, run/cancel the active controller only.
+  const runFn = crossMode ? cross.run : active.run;
+  const cancelFn = crossMode ? cross.cancel : active.cancel;
 
-  // Fetch the first matching line's content when a file row is expanded, so the
-  // expand shows real decoded text (fetched via ③a's `getLines`). A monotonic
-  // request id ignores stale fetches from an older match set.
+  // The expanded row + its first match line number (for the line-content fetch
+  // + the jump click). Null when nothing is expanded or the expanded row has
+  // no matches.
+  const expandedRow = expandedId ? rows.find((r) => r.sessionId === expandedId) : null;
+  const expandedFirst =
+    expandedRow && expandedRow.matches.length > 0 ? expandedRow.matches[0] : null;
+
+  // Fetch the expanded row's first matching line content, so the expand shows
+  // real decoded text (fetched via ③a's `getLines`). A monotonic request id
+  // ignores stale fetches from an older match set.
   const lineReq = useRef(0);
   useEffect(() => {
-    if (!expanded || matches.length === 0) {
+    if (expandedId == null || expandedFirst == null) {
       setLineContent(null);
       return;
     }
     const id = ++lineReq.current;
-    getLines(sessionId, matches[0], 1).then((lines) => {
+    getLines(expandedId, expandedFirst, 1).then((lines) => {
       if (id !== lineReq.current) return;
       setLineContent(lines[0] ?? "");
     });
-  }, [sessionId, expanded, matches]);
+  }, [expandedId, expandedFirst]);
 
   // The run trigger. Fires only on an explicit runTick bump (Search click or a
   // history/nav click). Skips an overlapping scan of the EXACT same query that
@@ -312,9 +366,9 @@ export function SearchPanel({
   useEffect(() => {
     if (runTick === 0) return;
     const sig = JSON.stringify(query);
-    if (sig === lastRunSig.current && status === "running") return;
+    if (sig === lastRunSig.current && anyRunning) return;
     lastRunSig.current = sig;
-    void run();
+    void runFn();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runTick]);
 
@@ -343,7 +397,7 @@ export function SearchPanel({
 
   function handleSearch() {
     if (!hasKeyword) return;
-    pushHistory(form, matches.length);
+    pushHistory(form, totalHits);
     setHistoryOpen(false);
     // Lift the built query to App so its useSearch keys on it (the controller
     // whose matches also flow to VirtualLogView). Batched with setRunTick →
@@ -410,7 +464,9 @@ export function SearchPanel({
     historyIndex >= 0 && history[historyIndex]
       ? history[historyIndex].title
       : describeQuery(form) || "—";
-  const fileCount = matches.length > 0 ? 1 : 0;
+  // Matched-file count across all rows (active session only in single-session
+  // mode, all open sessions in cross-file mode).
+  const fileCount = rows.filter((r) => r.matches.length > 0).length;
 
   return (
     <section className="sp" aria-label="Search panel">
@@ -509,8 +565,8 @@ export function SearchPanel({
         >
           Search
         </button>
-        {status === "running" && (
-          <button className="btn-cancel" onClick={() => cancel()}>
+        {anyRunning && (
+          <button className="btn-cancel" onClick={() => cancelFn()}>
             Cancel
           </button>
         )}
@@ -521,7 +577,7 @@ export function SearchPanel({
         entries={history}
         currentIndex={historyIndex}
         open={historyOpen}
-        resultCount={matches.length}
+        resultCount={totalHits}
         fileCount={fileCount}
         currentTitle={currentTitle}
         onToggle={() => setHistoryOpen((o) => !o)}
@@ -530,58 +586,73 @@ export function SearchPanel({
         onClear={handleClear}
       />
 
-      {/* ---- flat results ---- */}
+      {/* ---- flat results (B4: one row per matched file across all open
+            sessions; single-session mode collapses to the active file) ---- */}
       <div className="results">
-        {matches.length === 0 && status === "running" && (
-          <div className="sp-empty">搜索中…</div>
-        )}
-        {matches.length === 0 && status === "done" && (
+        {totalHits === 0 && anyRunning && <div className="sp-empty">搜索中…</div>}
+        {totalHits === 0 && !anyRunning && allDone && (
           <div className="sp-empty">无结果</div>
         )}
-        {matches.length === 0 && (status === "idle" || status === "cancelled" || status === "error") && (
+        {totalHits === 0 && !anyRunning && !allDone && (
           <div className="sp-empty">—</div>
         )}
-        {matches.length > 0 && (
-          <div>
-            <div
-              className={`frow${expanded ? " active" : ""}`}
-              role="button"
-              tabIndex={0}
-              aria-expanded={expanded}
-              aria-label={filePath ?? sessionId}
-              onClick={() => setExpanded((e) => !e)}
-            >
-              <span className="twist">{expanded ? "▾" : "▸"}</span>
-              <span className="path">{filePath ?? sessionId}</span>
-              <span className="hc">{matches.length} 命中</span>
-            </div>
-            {expanded && (
-              <div className="fsub">
-                {lineContent != null && (
-                  <div
-                    className="mln hit"
-                    role={onJumpToLine ? "button" : undefined}
-                    tabIndex={onJumpToLine ? 0 : undefined}
-                    aria-label={
-                      onJumpToLine ? `Jump to line ${matches[0]}` : undefined
-                    }
-                    onClick={
-                      onJumpToLine
-                        ? () => onJumpToLine(matches[0])
-                        : undefined
-                    }
-                  >
-                    <span className="no">{matches[0]}</span>
-                    <span className="msg">{lineContent}</span>
+        {rows
+          .filter((r) => r.matches.length > 0)
+          .map((r) => {
+            const path = crossMode
+              ? filePathFor?.(r.sessionId) ?? r.sessionId
+              : filePath ?? r.sessionId;
+            const isOpen = expandedId === r.sessionId;
+            // The jump loop is wired only for the ACTIVE session's row: jumping
+            // VirtualLogView to a line number from a DIFFERENT session is
+            // incoherent (the view shows the active session). Non-active rows
+            // expand to show decoded line content but are not jump-clickable.
+            const canJump = !!onJumpToLine && r.sessionId === sessionId;
+            const first = r.matches[0];
+            return (
+              <div key={r.sessionId}>
+                <div
+                  className={`frow${isOpen ? " active" : ""}`}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={isOpen}
+                  aria-label={path}
+                  onClick={() =>
+                    setExpandedId((prev) =>
+                      prev === r.sessionId ? null : r.sessionId,
+                    )
+                  }
+                >
+                  <span className="twist">{isOpen ? "▾" : "▸"}</span>
+                  <span className="path">{path}</span>
+                  <span className="hc">{r.matches.length} 命中</span>
+                </div>
+                {isOpen && expandedFirst != null && r.sessionId === expandedId && (
+                  <div className="fsub">
+                    {lineContent != null && (
+                      <div
+                        className="mln hit"
+                        role={canJump ? "button" : undefined}
+                        tabIndex={canJump ? 0 : undefined}
+                        aria-label={
+                          canJump ? `Jump to line ${expandedFirst}` : undefined
+                        }
+                        onClick={
+                          canJump ? () => onJumpToLine!(expandedFirst) : undefined
+                        }
+                      >
+                        <span className="no">{expandedFirst}</span>
+                        <span className="msg">{lineContent}</span>
+                      </div>
+                    )}
+                    {r.matches.length > 1 && (
+                      <div className="more">还有 {r.matches.length - 1} 行</div>
+                    )}
                   </div>
                 )}
-                {matches.length > 1 && (
-                  <div className="more">还有 {matches.length - 1} 行</div>
-                )}
               </div>
-            )}
-          </div>
-        )}
+            );
+          })}
       </div>
     </section>
   );

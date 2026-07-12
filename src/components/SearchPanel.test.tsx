@@ -9,15 +9,18 @@ import {
 } from "./SearchPanel";
 
 // Mock `../lib/ipc` so the SearchPanel is tested in isolation from Tauri: we
-// control `useSearch`'s {matches,status,run,cancel} and `getLines`'s resolved
-// lines. `vi.hoisted` makes the fns available to the `vi.mock` factory (which
-// runs during import resolution, before the module body).
-const { useSearchMock, getLinesMock } = vi.hoisted(() => ({
+// control `useSearch`'s {matches,status,run,cancel} (single-session fallback),
+// `useCrossFileSearch`'s {results,run,cancel} (cross-file mode), and `getLines`'s
+// resolved lines. `vi.hoisted` makes the fns available to the `vi.mock` factory
+// (which runs during import resolution, before the module body).
+const { useSearchMock, useCrossFileSearchMock, getLinesMock } = vi.hoisted(() => ({
   useSearchMock: vi.fn(),
+  useCrossFileSearchMock: vi.fn(),
   getLinesMock: vi.fn(),
 }));
 vi.mock("../lib/ipc", () => ({
   useSearch: useSearchMock,
+  useCrossFileSearch: useCrossFileSearchMock,
   getLines: getLinesMock,
 }));
 
@@ -37,6 +40,23 @@ function fakeCtrl(
   };
 }
 
+/** A cross-file aggregate view: one {sessionId,matches,status} per open session.
+ *  Mirrors the shape `useCrossFileSearch` returns. */
+function fakeCross(
+  results: { sessionId: string; matches: number[]; status?: "idle" | "running" | "done" | "cancelled" | "error" }[],
+  opts?: { run?: ReturnType<typeof vi.fn>; cancel?: ReturnType<typeof vi.fn> },
+) {
+  return {
+    results: results.map((r) => ({
+      sessionId: r.sessionId,
+      matches: r.matches,
+      status: r.status ?? "done",
+    })),
+    run: opts?.run ?? vi.fn(),
+    cancel: opts?.cancel ?? vi.fn(),
+  };
+}
+
 const emptyForm: QueryForm = {
   keywords: [],
   combinator: "AND",
@@ -46,8 +66,14 @@ const emptyForm: QueryForm = {
 
 beforeEach(() => {
   useSearchMock.mockReset();
+  useCrossFileSearchMock.mockReset();
   getLinesMock.mockReset();
   useSearchMock.mockReturnValue(fakeCtrl());
+  // Default cross-file mock: no sessions → empty results (single-session tests
+  // that don't pass `sessionIds` never read this, but it must be a valid shape
+  // so the unconditional `useCrossFileSearch` call inside SearchPanel doesn't
+  // blow up).
+  useCrossFileSearchMock.mockReturnValue(fakeCross([]));
   getLinesMock.mockResolvedValue([]);
 });
 
@@ -543,5 +569,110 @@ describe("SearchPanel form edits", () => {
     render(<SearchPanel sessionId="s1" filePath="logs/x.log" />);
     expect(screen.getAllByText(/4\s*命中/).length).toBeGreaterThan(0);
     expect(screen.getByText(/1\s*文件/i)).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// component: cross-file results (B4 — one flat row per matched file across ALL
+// open sessions, Notepad++ Find-in-Files style). SearchPanel switches to
+// `useCrossFileSearch` when `sessionIds` is provided.
+// ---------------------------------------------------------------------------
+describe("SearchPanel cross-file results", () => {
+  it("renders one flat row per session with hits across all open sessions (a.log · 8, b.log · 4, c.log · 5)", () => {
+    useCrossFileSearchMock.mockReturnValue(
+      fakeCross([
+        { sessionId: "s1", matches: [1, 2, 3, 4, 5, 6, 7, 8], status: "done" },
+        { sessionId: "s2", matches: [10, 11, 12, 13], status: "done" },
+        { sessionId: "s3", matches: [20, 21, 22, 23, 24], status: "done" },
+      ]),
+    );
+    const filePathFor = (sid: string) =>
+      ({ s1: "logs/auth/a.log", s2: "logs/b.log", s3: "logs/c.log" })[sid] ?? sid;
+    render(
+      <SearchPanel
+        sessionId="s1"
+        sessionIds={["s1", "s2", "s3"]}
+        filePathFor={filePathFor}
+      />,
+    );
+    // three flat rows — one per matched file, each labeled by its full path
+    expect(screen.getByText("logs/auth/a.log")).toBeTruthy();
+    expect(screen.getByText("logs/b.log")).toBeTruthy();
+    expect(screen.getByText("logs/c.log")).toBeTruthy();
+    // hit counts per file (B4: "一个命中文件全路径一行")
+    expect(screen.getAllByText(/8\s*命中/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/4\s*命中/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/5\s*命中/).length).toBeGreaterThan(0);
+  });
+
+  it("omits sessions with zero matches from the flat rows", () => {
+    useCrossFileSearchMock.mockReturnValue(
+      fakeCross([
+        { sessionId: "s1", matches: [1, 2], status: "done" },
+        { sessionId: "s2", matches: [], status: "done" }, // no hits → no row
+        { sessionId: "s3", matches: [3], status: "done" },
+      ]),
+    );
+    const filePathFor = (sid: string) =>
+      ({ s1: "a.log", s2: "b.log", s3: "c.log" })[sid] ?? sid;
+    render(
+      <SearchPanel
+        sessionId="s1"
+        sessionIds={["s1", "s2", "s3"]}
+        filePathFor={filePathFor}
+      />,
+    );
+    expect(screen.getByText("a.log")).toBeTruthy();
+    expect(screen.queryByText("b.log")).toBeNull(); // zero-hit file not shown
+    expect(screen.getByText("c.log")).toBeTruthy();
+  });
+
+  it("shows the aggregate hit + file count meta across all sessions", () => {
+    useCrossFileSearchMock.mockReturnValue(
+      fakeCross([
+        { sessionId: "s1", matches: [1, 2, 3, 4, 5, 6, 7, 8], status: "done" },
+        { sessionId: "s2", matches: [10, 11, 12, 13], status: "done" },
+        { sessionId: "s3", matches: [20, 21, 22, 23, 24], status: "done" },
+      ]),
+    );
+    render(
+      <SearchPanel
+        sessionId="s1"
+        sessionIds={["s1", "s2", "s3"]}
+        filePathFor={() => "x.log"}
+      />,
+    );
+    // 8 + 4 + 5 = 17 total hits across 3 files
+    expect(screen.getAllByText(/17\s*命中/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/3\s*文件/i)).toBeTruthy();
+  });
+
+  it("runs useCrossFileSearch.run() (all sessions) on Search click — not the single-session useSearch.run", () => {
+    const crossRun = vi.fn();
+    const localRun = vi.fn();
+    // SearchPanel still calls `useSearch` once for the active session (hooks
+    // rule — the single-session fallback path), but in cross-file mode its run
+    // must NOT be the one invoked: the cross-file run fans out to all sessions.
+    useSearchMock.mockReturnValue(fakeCtrl({ run: localRun }));
+    useCrossFileSearchMock.mockReturnValue(
+      fakeCross(
+        [
+          { sessionId: "s1", matches: [], status: "idle" },
+          { sessionId: "s2", matches: [], status: "idle" },
+        ],
+        { run: crossRun },
+      ),
+    );
+    render(
+      <SearchPanel
+        sessionId="s1"
+        sessionIds={["s1", "s2"]}
+        filePathFor={() => "x.log"}
+      />,
+    );
+    addKeyword("refused");
+    fireEvent.click(screen.getByRole("button", { name: /^search$/i }));
+    expect(crossRun).toHaveBeenCalledTimes(1);
+    expect(localRun).not.toHaveBeenCalled();
   });
 });

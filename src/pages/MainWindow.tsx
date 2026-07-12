@@ -111,6 +111,8 @@ export function MainWindow({
               <SearchPanel
                 sessionId={active.sessionId}
                 filePath={active.path}
+                sessionIds={[...map.keys()]}
+                filePathFor={(sid: string) => map.get(sid)?.path}
                 search={search}
                 setActiveQuery={setActiveQuery}
                 onJumpToLine={(n: number) => setJumpTarget(n)}

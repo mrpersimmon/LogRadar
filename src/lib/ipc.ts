@@ -200,3 +200,93 @@ export function useSearch(sessionId: string, query: unknown, cap: number): {
   const status = useSyncExternalStore(ctrl.subscribe, ctrl.getStatus);
   return { matches, status, run: ctrl.run, cancel: ctrl.cancel };
 }
+
+// ---------------------------------------------------------------------------
+// Cross-file search aggregation (spec B4 — "一个命中文件全路径一行" flat
+// results). Runs `useSearch` per session and aggregates each session's matches
+// into a flat per-session result list so SearchPanel can render one row per
+// matched file (path · N hits) across ALL open sessions — not just the active
+// one. Reuses `useSearch` verbatim: the controller registry dedupes by
+// (sessionId, query, cap), so the active session's slot here resolves to the
+// SAME singleton controller App's lifted `useSearch` owns — no duplicate scan,
+// and the active session's matches stay shared with VirtualLogView's hits.
+//
+// React's rules-of-hooks forbid calling `useSearch` a variable number of times
+// (the count must be stable across renders), so this hook pads `sessionIds`
+// up to a fixed slot count with a stable sentinel (sessionId="" + sentinel
+// query) whose controller stays idle forever — never run, never scans. The
+// sentinel key is constant, so the registry collapses every unused slot to a
+// SINGLE idle controller regardless of how many slots are empty.
+// ---------------------------------------------------------------------------
+
+/** The maximum number of open sessions cross-file search aggregates across.
+ *  Tabs beyond this count are simply not searched (v1 cap; SplitView uses 2,
+ *  TabStrip realistically < this). Unrolled `useSearch` calls keep the hook
+ *  rules-of-hooks compliant (a loop would trip the linter). */
+const MAX_CROSS_SESSIONS = 8;
+
+/** Sentinel session id for empty slots — real session ids are Rust UUIDs, so
+ *  "" never collides with a real session. */
+const SENTINEL_SID = "";
+
+/** A stable idle query for sentinel slots. Identical shape to SearchPanel's
+ *  EMPTY_QUERY (a leaf text predicate on ""), but defined locally to avoid a
+ *  circular import (SearchPanel imports from this module). Its controller is
+ *  never run → never scans → stays idle forever. */
+const SENTINEL_QUERY: { root: { kind: "leaf"; predicate: { kind: "text"; text: string } } } = {
+  root: { kind: "leaf", predicate: { kind: "text", text: "" } },
+};
+
+export type CrossFileResult = {
+  sessionId: string;
+  matches: number[];
+  status: SearchStatus;
+};
+
+/**
+ * Reactive cross-file search: one `{sessionId, matches, status}` per entry in
+ * `sessionIds`, plus `run`/`cancel` that fan out to every session's controller.
+ * `results` is a fresh array each render but each entry's `matches` is the
+ * referentially-stable snapshot array from that session's controller (so React
+ * sees a changed reference only when a batch actually arrived).
+ */
+export function useCrossFileSearch(
+  sessionIds: string[],
+  query: unknown,
+  cap: number,
+): {
+  results: CrossFileResult[];
+  run: () => Promise<void>;
+  cancel: () => void;
+} {
+  // Fixed-slot padding (unrolled to satisfy rules-of-hooks): real sessions use
+  // the real query; empty slots use the sentinel (idle forever). The registry
+  // dedupes the sentinel to one entry, so the unused slots cost nothing.
+  const s0 = useSearch(sessionIds[0] ?? SENTINEL_SID, sessionIds[0] ? query : SENTINEL_QUERY, cap);
+  const s1 = useSearch(sessionIds[1] ?? SENTINEL_SID, sessionIds[1] ? query : SENTINEL_QUERY, cap);
+  const s2 = useSearch(sessionIds[2] ?? SENTINEL_SID, sessionIds[2] ? query : SENTINEL_QUERY, cap);
+  const s3 = useSearch(sessionIds[3] ?? SENTINEL_SID, sessionIds[3] ? query : SENTINEL_QUERY, cap);
+  const s4 = useSearch(sessionIds[4] ?? SENTINEL_SID, sessionIds[4] ? query : SENTINEL_QUERY, cap);
+  const s5 = useSearch(sessionIds[5] ?? SENTINEL_SID, sessionIds[5] ? query : SENTINEL_QUERY, cap);
+  const s6 = useSearch(sessionIds[6] ?? SENTINEL_SID, sessionIds[6] ? query : SENTINEL_QUERY, cap);
+  const s7 = useSearch(sessionIds[7] ?? SENTINEL_SID, sessionIds[7] ? query : SENTINEL_QUERY, cap);
+  const slots = [s0, s1, s2, s3, s4, s5, s6, s7];
+
+  const results: CrossFileResult[] = sessionIds.map((sid, i) => ({
+    sessionId: sid,
+    matches: slots[i].matches,
+    status: slots[i].status,
+  }));
+
+  const run = async () => {
+    // Fan out to every real session's controller (sentinel slots excluded).
+    // `slots[i].run` is each controller's stable singleton `run`, so even
+    // though `slots` is re-derived per render, the methods resolve to the same
+    // controllers the registry owns.
+    await Promise.all(slots.slice(0, sessionIds.length).map((s) => s.run()));
+  };
+  const cancel = () => {
+    slots.slice(0, sessionIds.length).forEach((s) => s.cancel());
+  };
+  return { results, run, cancel };
+}

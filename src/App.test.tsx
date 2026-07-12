@@ -17,6 +17,7 @@ vi.mock("./lib/ipc", () => ({
   workspaceLoad: vi.fn(),
   workspaceList: vi.fn(),
   useSearch: useSearchMock,
+  useCrossFileSearch: vi.fn(() => ({ results: [], run: vi.fn(), cancel: vi.fn() })),
   getSearchController: vi.fn(),
   __resetSearchControllers: vi.fn(),
 }));

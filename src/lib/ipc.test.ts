@@ -4,6 +4,7 @@ import {
   openFile,
   getSearchController,
   useSearch,
+  useCrossFileSearch,
   type SearchEvent,
 } from "./ipc";
 
@@ -13,24 +14,23 @@ import {
 // @tauri-apps/api v2 note: the real `Channel` is Tauri-runtime-bound — its
 // constructor touches `window.__TAURI_INTERNALS__`, which jsdom does not
 // provide, so `new Channel()` throws. Unit tests therefore stub `Channel`
-// with a constructible that records the latest instance, letting the test
-// drive `channel.onmessage` directly to prove the batch-accumulation logic.
-// The real streaming path (Rust `on_event.send` -> JS `channel.onmessage`)
-// is proven end-to-end in ③b/④.
-const { invokeMock, MockChannel, lastChannel } = vi.hoisted(() => {
+// with a constructible that records every instance (so a test can drive
+// `channel.onmessage` for several sessions at once), letting the test prove
+// the batch-accumulation logic. The real streaming path (Rust `on_event.send`
+// -> JS `channel.onmessage`) is proven end-to-end in ③b/④.
+const { invokeMock, MockChannel, allChannels, lastChannel } = vi.hoisted(() => {
   const invokeMock = vi.fn();
-  let last: { onmessage?: (msg: SearchEvent) => void } | null = null;
+  const all: { onmessage?: (msg: SearchEvent) => void }[] = [];
   class MockChannel<T = unknown> {
     onmessage?: (msg: T) => void;
     constructor(onmessage?: (msg: T) => void) {
       if (onmessage) this.onmessage = onmessage;
-      last = this as unknown as { onmessage?: (msg: SearchEvent) => void };
+      all.push(this as unknown as { onmessage?: (msg: SearchEvent) => void });
     }
   }
-  (MockChannel as unknown as { __lastChannel: () => typeof last }).__lastChannel = () => last;
-  const lastChannel = () =>
-    (MockChannel as unknown as { __lastChannel: () => { onmessage?: (e: SearchEvent) => void } }).__lastChannel();
-  return { invokeMock, MockChannel, lastChannel };
+  const allChannels = () => all;
+  const lastChannel = () => all[all.length - 1];
+  return { invokeMock, MockChannel, allChannels, lastChannel };
 });
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -40,6 +40,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 
 beforeEach(() => {
   invokeMock.mockReset();
+  allChannels().length = 0; // reset captured channels between cases
 });
 
 describe("openFile", () => {
@@ -192,5 +193,97 @@ describe("useSearch (React hook) re-renders on batch", () => {
     });
     expect(result.current.status).toBe("done");
     expect(result.current.matches).toEqual([7, 8]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useCrossFileSearch: aggregates per-session useSearch results into a flat
+// {sessionId, matches, status}[] list (B4 — cross-file Find-in-Files). Reuses
+// `useSearch` verbatim (the controller registry dedupes by (sessionId, query,
+// cap), so the active session's controller here is the SAME singleton App's
+// lifted useSearch owns). This drives three sessions' channels and proves the
+// hook aggregates each session's matches into one entry per session.
+// ---------------------------------------------------------------------------
+describe("useCrossFileSearch aggregates per-session matches", () => {
+  it("returns one {sessionId,matches,status} per session, each reactive to its own channel", async () => {
+    invokeMock.mockImplementation(async () => {});
+    const query = { root: { kind: "leaf", predicate: { kind: "text", text: "refused" } } };
+    const { result } = renderHook(() =>
+      useCrossFileSearch(["s1", "s2", "s3"], query, 100),
+    );
+
+    // Three entries, one per session, idle + empty before any run.
+    expect(result.current.results).toHaveLength(3);
+    expect(result.current.results.map((r) => r.sessionId)).toEqual(["s1", "s2", "s3"]);
+    expect(result.current.results.every((r) => r.matches.length === 0)).toBe(true);
+
+    // run() fans out to ALL sessions — each creates its own channel.
+    await act(async () => {
+      await result.current.run();
+    });
+    const chans = allChannels();
+    expect(chans).toHaveLength(3);
+
+    // Stream a different match-count into each session's channel.
+    await act(async () => {
+      chans[0].onmessage!({ kind: "batch", matches: [1, 2, 3, 4, 5, 6, 7, 8] }); // a.log · 8
+      chans[1].onmessage!({ kind: "batch", matches: [10, 11, 12, 13] }); // b.log · 4
+      chans[2].onmessage!({ kind: "batch", matches: [20, 21, 22, 23, 24] }); // c.log · 5
+    });
+    expect(result.current.results.map((r) => [r.sessionId, r.matches.length])).toEqual([
+      ["s1", 8],
+      ["s2", 4],
+      ["s3", 5],
+    ]);
+
+    // A second batch into s1 appends (s1's matches grow 8 → 9) without
+    // disturbing s2/s3 — proves per-session reactivity, not a shared array.
+    await act(async () => {
+      chans[0].onmessage!({ kind: "batch", matches: [99] });
+    });
+    expect(result.current.results[0].matches).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 99]);
+    expect(result.current.results[1].matches).toEqual([10, 11, 12, 13]);
+    expect(result.current.results[2].matches).toEqual([20, 21, 22, 23, 24]);
+  });
+
+  it("shares the active session's controller with useSearch (registry dedup — no duplicate scan)", async () => {
+    invokeMock.mockImplementation(async () => {});
+    const query = { root: { kind: "leaf", predicate: { kind: "text", text: "x" } } };
+    // The active session's controller, obtained directly via getSearchController
+    // (the SAME singleton useSearch subscribes to).
+    const activeCtrl = getSearchController("s1", query, 100);
+
+    const { result } = renderHook(() =>
+      useCrossFileSearch(["s1", "s2"], query, 100),
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    const chans = allChannels();
+    // Drive s1's channel. Because the cross-file slot for s1 resolved to the
+    // SAME controller as `activeCtrl`, activeCtrl.matches must reflect the
+    // batch too — proving no duplicate controller/scan was created.
+    await act(async () => {
+      chans[0].onmessage!({ kind: "batch", matches: [5, 6, 7] });
+    });
+    expect(activeCtrl.matches).toEqual([5, 6, 7]);
+    expect(result.current.results[0].matches).toBe(activeCtrl.matches); // same ref
+  });
+
+  it("cancel() fans out to every session's controller", async () => {
+    invokeMock.mockImplementation(async () => {});
+    const query = { root: { kind: "leaf", predicate: { kind: "text", text: "x" } } };
+    const { result } = renderHook(() =>
+      useCrossFileSearch(["s1", "s2"], query, 100),
+    );
+    await act(async () => {
+      await result.current.run();
+    });
+    // invoke('cancel_search', {sessionId}) is fired once per session.
+    invokeMock.mockClear();
+    result.current.cancel();
+    const cancels = invokeMock.mock.calls.filter((c) => c[0] === "cancel_search");
+    expect(cancels).toHaveLength(2);
+    expect(cancels.map((c) => (c[1] as { sessionId: string }).sessionId).sort()).toEqual(["s1", "s2"]);
   });
 });

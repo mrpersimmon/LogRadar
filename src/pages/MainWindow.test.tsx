@@ -15,16 +15,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, waitFor } from "@testing-library/react";
 import type { SessionsApi, SessionMeta } from "../hooks/useSessions";
 
-// Mock the IPC module so VirtualLogView's `getLines` and SearchPanel's
-// `useSearch` never touch Tauri in jsdom. `vi.hoisted` makes the spies available
+// Mock the IPC module so VirtualLogView's `getLines`, SearchPanel's
+// `useSearch` (single-session fallback) + `useCrossFileSearch` (cross-file
+// mode), never touch Tauri in jsdom. `vi.hoisted` makes the spies available
 // to the factory (which runs during import resolution, before the module body).
-const { getLinesMock, useSearchMock } = vi.hoisted(() => ({
+const { getLinesMock, useSearchMock, useCrossFileSearchMock } = vi.hoisted(() => ({
   getLinesMock: vi.fn(),
   useSearchMock: vi.fn(),
+  useCrossFileSearchMock: vi.fn(),
 }));
 vi.mock("../lib/ipc", () => ({
   getLines: getLinesMock,
   useSearch: useSearchMock,
+  useCrossFileSearch: useCrossFileSearchMock,
 }));
 
 import { MainWindow } from "./MainWindow";
@@ -68,6 +71,7 @@ function fakeCtrl() {
 beforeEach(() => {
   getLinesMock.mockReset();
   useSearchMock.mockReset();
+  useCrossFileSearchMock.mockReset();
   getLinesMock.mockImplementation(
     (_sid: string, _start: number, count: number) =>
       Promise.resolve(
@@ -75,6 +79,14 @@ beforeEach(() => {
       ),
   );
   useSearchMock.mockReturnValue(fakeCtrl());
+  // Cross-file mock: empty results (one per session would be more faithful,
+  // but MainWindow's tests don't assert SearchPanel's flat rows — they just
+  // need the unconditional `useCrossFileSearch` call to not crash).
+  useCrossFileSearchMock.mockReturnValue({
+    results: [],
+    run: vi.fn(),
+    cancel: vi.fn(),
+  });
 });
 
 /** jsdom reports 0 for all layout metrics (no layout engine). Force
