@@ -1,0 +1,16 @@
+# Claude Code brainstorm mockups (visual companion — not source)
+.superpowers/
+
+# local-only Claude Code settings
+.claude/settings.local.json
+
+# Rust / Tauri build artifacts
+/target/
+src-tauri/target/
+
+# web build
+node_modules/
+dist/
+
+# OS
+.DS_Store
