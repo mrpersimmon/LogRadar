@@ -19,6 +19,13 @@ pub struct SearchResult {
     pub cancelled: bool,     // true if the user cancelled mid-scan
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamResult {
+    pub matched: u64,
+    pub cancelled: bool,
+    pub truncated: bool,
+}
+
 pub struct QueryEngine;
 
 impl QueryEngine {
@@ -62,6 +69,36 @@ impl QueryEngine {
         // as Err, so ignore it and return whatever matches were collected.
         let _ = scan;
         SearchResult { matches, truncated, cancelled }
+    }
+}
+
+impl QueryEngine {
+    /// Streaming variant of `search`: calls `on_match(line_no)` per match during the scan,
+    /// checks the cancel token between lines, stops at `cap`. Does NOT accumulate a Vec —
+    /// the caller streams matches via the callback. Returns a summary.
+    pub fn search_stream(
+        session: &mut Session,
+        query: &Query,
+        fmt: &LineFormat,
+        token: &CancellationToken,
+        cap: usize,
+        mut on_match: impl FnMut(u64),
+    ) -> StreamResult {
+        let mut matched: u64 = 0;
+        let mut cancelled = false;
+        let mut truncated = false;
+        let total = session.line_count();
+        let scan_result = session.scan_lines(|n, bytes| {
+            if token.is_cancelled() { return false; }                  // early-stop
+            if matched >= cap as u64 { truncated = true; return false; }
+            let line = String::from_utf8_lossy(bytes);
+            if eval_node(&query.root, fmt, &line) { on_match(n); matched += 1; }
+            true
+        });
+        let _ = scan_result; // scan completes; cancelled/truncated handled via early-stop above
+        // re-check token (cancel may have been set after last line)
+        if token.is_cancelled() { cancelled = true; }
+        StreamResult { matched, cancelled, truncated }
     }
 }
 
@@ -159,5 +196,62 @@ mod tests {
         assert_eq!(res.matches.len(), 3); // lines 0,1,3
         assert!(!res.cancelled);
         assert!(!res.truncated);
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    use std::io::Write;
+    fn write_tmp(content: &str) -> std::path::PathBuf {
+        // Unique per call: the 3 stream tests run in parallel and would clobber a
+        // path keyed only on PID (same bug engine::tests already fixed). Counter
+        // + PID guarantees uniqueness across threads.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!("lr-stream-{}-{}.log", std::process::id(), n));
+        let _ = std::fs::remove_file(&p);
+        let mut f = std::fs::File::create(&p).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        p
+    }
+    #[test]
+    fn search_stream_emits_matches_during_scan() {
+        let p = write_tmp("INFO a\nERROR hit\nERROR hit\nWARN x\nERROR hit\n");
+        let mut s = Session::open(&p).unwrap();
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+        let tok = CancellationToken::new();
+        let fmt = s.format().clone();
+        let mut got = Vec::new();
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        assert_eq!(got, vec![1, 2, 4]);
+        assert_eq!(res.matched, 3);
+        assert!(!res.cancelled && !res.truncated);
+    }
+    #[test]
+    fn search_stream_caps_and_flags_truncated() {
+        let p = write_tmp(&"ERROR hit\n".repeat(10));
+        let mut s = Session::open(&p).unwrap();
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+        let tok = CancellationToken::new();
+        let fmt = s.format().clone();
+        let mut got = Vec::new();
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, 3, |n| got.push(n));
+        assert_eq!(got.len(), 3);
+        assert!(res.truncated);
+    }
+    #[test]
+    fn search_stream_cancel_stops_early() {
+        let p = write_tmp(&"ERROR hit\n".repeat(1000));
+        let mut s = Session::open(&p).unwrap();
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("hit".into()))).unwrap();
+        let tok = CancellationToken::new();
+        tok.cancel();
+        let fmt = s.format().clone();
+        let mut got = Vec::new();
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n| got.push(n));
+        assert!(got.is_empty());
+        assert!(res.cancelled);
     }
 }
