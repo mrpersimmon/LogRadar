@@ -1,5 +1,329 @@
-.welcome { padding:24px; display:flex; flex-direction:column; align-items:center; gap:14px; }
-.welcome .drop { border:1.5px dashed var(--border); border-radius:16px; background:var(--surface); padding:42px 24px; width:100%; max-width:520px; text-align:center; color:var(--text-dim); }
-.welcome button { background:var(--scan); color:#06231F; border:none; border-radius:8px; padding:9px 18px; font-weight:600; cursor:pointer; }
-.welcome .meta { font-family:var(--font-mono); font-size:12px; color:var(--text-dim); }
-.welcome .err { color:var(--err); font-size:12px; }
+/* WelcomePage — landing screen. Ported from
+   `.superpowers/brainstorm/28981-1783785226/content/welcome-v3.html` (drop /
+   sweep / fmts / actions / recents / ritem / lq / ws-head / wlist / wcard),
+   restyled with ③a's premium CSS-variable tokens. The `wp-` prefix scopes
+   these names. The radar-sweep beam is a CSS conic-gradient that rotates under
+   `@media (prefers-reduced-motion: reduce)` → animation:none (static beam). */
+
+.wp {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+/* drop zone */
+.wp-drop {
+  position: relative;
+  border: 1.5px dashed var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  padding: 42px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  overflow: hidden;
+  transition: 0.2s;
+}
+.wp-drop:hover {
+  border-color: var(--scan);
+  background: color-mix(in srgb, var(--scan) 5%, var(--surface));
+}
+.wp-drop-glow {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    420px 200px at 50% 30%,
+    var(--scan-soft),
+    transparent 70%
+  );
+  pointer-events: none;
+}
+
+/* radar sweep — dark: glowing phosphor */
+.wp-sweep {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  z-index: 1;
+}
+.wp-sweep .wp-ring {
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+}
+.wp-sweep .wp-ring.r2 {
+  inset: 18px;
+}
+.wp-sweep .wp-ring.r3 {
+  inset: 36px;
+}
+.wp-sweep .wp-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--scan);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 12px var(--scan);
+}
+.wp-sweep .wp-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    var(--scan-soft) 30deg,
+    transparent 60deg
+  );
+  animation: wp-spin 7s linear infinite;
+}
+@keyframes wp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.wp-sweep .wp-blip {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--err);
+  box-shadow: 0 0 8px var(--err);
+}
+.wp-sweep .wp-blip.b1 {
+  top: 22%;
+  right: 18%;
+}
+.wp-sweep .wp-blip.b2 {
+  bottom: 26%;
+  left: 24%;
+  background: var(--warn);
+  box-shadow: 0 0 8px var(--warn);
+}
+
+/* reduced motion → static beam (no rotation) */
+@media (prefers-reduced-motion: reduce) {
+  .wp-sweep .wp-beam {
+    animation: none;
+  }
+}
+
+/* light theme: crisp line diagram, no muddy glow */
+[data-theme="light"] .wp-sweep {
+  background: radial-gradient(circle, rgba(30, 138, 124, 0.06), transparent 72%);
+  border-radius: 50%;
+}
+[data-theme="light"] .wp-sweep .wp-ring {
+  border-color: color-mix(in srgb, var(--scan) 40%, var(--border));
+}
+[data-theme="light"] .wp-sweep .wp-beam {
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(30, 138, 124, 0.15) 28deg,
+    transparent 60deg
+  );
+}
+[data-theme="light"] .wp-sweep .wp-core {
+  box-shadow: 0 0 0 5px rgba(30, 138, 124, 0.16);
+}
+[data-theme="light"] .wp-sweep .wp-blip {
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+[data-theme="light"] .wp-sweep .wp-blip.b2 {
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+
+.wp-title {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 22px;
+  letter-spacing: -0.01em;
+  z-index: 1;
+  color: var(--text);
+}
+.wp-fmts {
+  display: flex;
+  gap: 7px;
+  z-index: 1;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.wp-fmt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 8px;
+}
+.wp-fmt.wp-folder {
+  color: var(--scan);
+  border-color: color-mix(in srgb, var(--scan) 35%, var(--border));
+}
+.wp-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  z-index: 1;
+}
+.wp-btn {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 12.5px;
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 9px 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  transition: 0.2s;
+}
+.wp-btn:hover {
+  border-color: var(--scan);
+}
+.wp-btn.wp-primary {
+  background: var(--scan);
+  color: #06231f;
+  border-color: var(--scan);
+}
+
+/* recents */
+.wp-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wp-recents-head,
+.wp-ws-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wp-eyebrow {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.wp-cnt {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.wp-rlist {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.wp-ritem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  cursor: pointer;
+  transition: 0.15s;
+}
+.wp-ritem:last-child {
+  border-bottom: none;
+}
+.wp-ritem:hover {
+  background: var(--surface-2);
+}
+.wp-ritem .wp-ico {
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.wp-ritem .wp-path {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wp-ritem .wp-lq {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--scan);
+  background: var(--scan-soft);
+  border: 1px solid color-mix(in srgb, var(--scan) 30%, transparent);
+  border-radius: 5px;
+  padding: 2px 7px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wp-ritem .wp-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  text-align: right;
+  min-width: 90px;
+}
+.wp-ritem .wp-meta .wp-sz {
+  color: var(--text-dim);
+}
+
+/* workspace cards */
+.wp-wlist {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.wp-wcard {
+  flex: 1;
+  min-width: 200px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.wp-wcard:hover {
+  border-color: var(--scan);
+}
+.wp-wcard .wp-wt {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.wp-wcard .wp-wm {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+  display: flex;
+  gap: 10px;
+}
+.wp-wcard .wp-wm .wp-n {
+  color: var(--scan);
+}
+
+.wp-err {
+  color: var(--err);
+  font-size: 12px;
+  font-family: var(--font-mono);
+}

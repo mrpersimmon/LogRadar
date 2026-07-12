@@ -1,0 +1,286 @@
+/* WorkspaceManager — modal over a dimmed backdrop. Ported from the `.modal` /
+   `.save` / `.wlist` / `.wcard` / `.wtop` / `.wname` / `.wmeta` / `.wact` /
+   `.wprev` / `.wfiles` / `.wqs` / `.wq` / `.mfoot` / `.btn` section of
+   `.superpowers/brainstorm/28981-1783828764/content/workspace.html`, restyled
+   with ③a's premium CSS-variable tokens. The `wm-` prefix scopes these names. */
+
+.wm-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.wm-modal {
+  width: min(660px, 94%);
+  max-height: 88%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.wm-mhead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.wm-eyebrow {
+  flex: 1;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.wm-x {
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  background: none;
+  border: none;
+  padding: 0;
+  line-height: 1;
+}
+.wm-x:hover {
+  color: var(--text);
+}
+.wm-mbody {
+  padding: 16px 18px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* save current */
+.wm-save {
+  background: var(--surface-2);
+  border: 1px dashed color-mix(in srgb, var(--scan) 35%, var(--border));
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+.wm-row1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.wm-name {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 10px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  outline: none;
+  min-width: 0;
+}
+.wm-name:focus {
+  border-color: var(--scan);
+}
+.wm-go {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  padding: 7px 14px;
+  border: none;
+  background: var(--scan);
+  color: #06231f;
+}
+.wm-go:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.wm-will {
+  margin-top: 7px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-faint);
+}
+.wm-will b {
+  color: var(--scan);
+  font-weight: 600;
+}
+
+/* workspace cards */
+.wm-wlist {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.wm-card {
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--surface);
+  transition: 0.15s;
+}
+.wm-card:hover {
+  border-color: var(--scan);
+}
+.wm-wtop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wm-wname {
+  font-weight: 600;
+  font-size: 13.5px;
+  flex: 1;
+  color: var(--text);
+}
+.wm-wmeta {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  display: flex;
+  gap: 10px;
+}
+.wm-wmeta .wm-n {
+  color: var(--scan);
+}
+.wm-wact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.wm-open {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 11.5px;
+  border-radius: 7px;
+  cursor: pointer;
+  padding: 5px 12px;
+  border: 1px solid var(--scan);
+  background: var(--scan-soft);
+  color: var(--scan);
+}
+.wm-open:hover {
+  background: color-mix(in srgb, var(--scan) 22%, transparent);
+}
+.wm-menu {
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  width: 24px;
+  text-align: center;
+}
+.wm-wprev {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.wm-wfiles {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.wm-wfiles .wm-file {
+  white-space: nowrap;
+}
+.wm-wqs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.wm-wq {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--scan);
+  background: var(--scan-soft);
+  border: 1px solid color-mix(in srgb, var(--scan) 30%, transparent);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 230px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wm-wq.more {
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+/* empty state */
+.wm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  color: var(--text-faint);
+}
+.wm-empty-glyph {
+  font-size: 26px;
+  color: var(--text-faint);
+}
+.wm-empty-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.wm-empty-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.wm-mfoot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--border-soft);
+  background: var(--surface-2);
+}
+.wm-link {
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+}
+.wm-link:hover {
+  color: var(--scan);
+}
+.wm-err {
+  color: var(--err);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.wm-sp {
+  flex: 1;
+}
+.wm-btn {
+  font-family: var(--font-ui);
+  font-weight: 600;
+  font-size: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+.wm-btn:hover {
+  border-color: var(--scan);
+}

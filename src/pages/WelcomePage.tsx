@@ -1,25 +1,192 @@
+// WelcomePage (Task 10 ③b, FULL rewrite) — the landing screen. A drop zone
+// with the signature radar-sweep animation (CSS conic-gradient beam, rotating
+// under `prefers-reduced-motion: reduce` → static), format badges, and Open
+// file / Open folder buttons; a recents list (each recent shows its path + a
+// last-query chip); and workspace cards. Opening a file wires the full chain:
+// openDialog → `sessions.open` (→ `openFile`) → `setView("main")` — closing the
+// gap noted in T7 (the router flips to MainWindow on open).
+//
+// Visual structure ported from
+// `.superpowers/brainstorm/28981-1783785226/content/welcome-v3.html` (drop /
+// sweep / fmts / actions / recents / ritem / lq / ws-head / wlist / wcard),
+// restyled with ③a's premium CSS-variable tokens.
+
 import { useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openFile, type OpenResponse } from "../lib/ipc";
+import type { SessionsApi } from "../hooks/useSessions";
+import type { View } from "../router";
 import "./WelcomePage.css";
 
-export function WelcomePage() {
-  const [meta, setMeta] = useState<OpenResponse | null>(null);
+export type RecentKind = "file" | "archive" | "folder";
+
+export type RecentEntry = {
+  path: string;
+  /** Display string e.g. "32 MB". */
+  size?: string;
+  /** Relative time label e.g. "just now". */
+  openedLabel?: string;
+  /** Last query run against this file; rendered as a chip. */
+  lastQuery?: string;
+  kind?: RecentKind;
+};
+
+export type WorkspaceCard = {
+  name: string;
+  fileCount: number;
+  queryCount: number;
+  lastOpened?: string;
+};
+
+export type WelcomePageProps = {
+  /** The single `useSessions()` instance (owned by `App`) — opening a file
+   *  registers it here, then `setView("main")` flips to MainWindow. */
+  sessions: SessionsApi;
+  /** View router setter; called with "main" after a file opens. */
+  setView: (v: View) => void;
+  /** Recents list. If omitted, derived from the open sessions. */
+  recents?: RecentEntry[];
+  /** Workspace cards. If omitted, none render (loaded via WorkspaceManager). */
+  workspaces?: WorkspaceCard[];
+};
+
+const FORMAT_BADGES = [".log", ".txt", ".gz", ".zip"];
+
+function recentIcon(kind: RecentKind = "file"): string {
+  if (kind === "archive") return "📦";
+  if (kind === "folder") return "📁";
+  return "📄";
+}
+
+export function WelcomePage({
+  sessions,
+  setView,
+  recents,
+  workspaces = [],
+}: WelcomePageProps) {
   const [err, setErr] = useState<string | null>(null);
-  async function onOpen() {
+
+  // Derived recents: if no explicit list is supplied, build one from the
+  // currently-open sessions (path + line count, no last-query chip).
+  const recentList: RecentEntry[] =
+    recents ??
+    [...sessions.sessions.values()].map((s) => ({
+      path: s.path,
+      size: `${s.lineCount.toLocaleString()} lines`,
+      openedLabel: "open",
+      kind: "file" as const,
+    }));
+
+  async function openPicked(getter: () => Promise<unknown>) {
+    setErr(null);
     try {
-      const path = await openDialog({ multiple: false });
-      if (typeof path !== "string") return;
-      setMeta(await openFile(path));
-      setErr(null);
-    } catch (e) { setErr(String(e)); }
+      const picked = await getter();
+      if (typeof picked !== "string") return; // cancelled / not a file path
+      await sessions.open(picked);
+      setView("main");
+    } catch (e) {
+      setErr(String(e));
+    }
   }
+
+  const onOpenFile = () => openPicked(() => openDialog({ multiple: false }));
+  const onOpenFolder = () => openPicked(() => openDialog({ directory: true }));
+
   return (
-    <div className="welcome">
-      <div className="drop">拖拽日志到这里（③b 完整版）</div>
-      <button onClick={onOpen}>Open file</button>
-      {meta && <div className="meta">sessionId: {meta.sessionId} · lineCount: {meta.lineCount} · encoding: {meta.encoding} · isJson: {String(meta.isJson)} · timestampFmt: {meta.timestampFmt}</div>}
-      {err && <div className="err">{err}</div>}
+    <div className="wp">
+      <section className="wp-drop" aria-label="Drop zone">
+        <div className="wp-drop-glow" aria-hidden />
+        {/* radar sweep — signature animation; reduced-motion → static (CSS) */}
+        <div className="wp-sweep" data-testid="radar-sweep" aria-hidden>
+          <div className="wp-ring" />
+          <div className="wp-ring r2" />
+          <div className="wp-ring r3" />
+          <div className="wp-beam" />
+          <div className="wp-blip b1" />
+          <div className="wp-blip b2" />
+          <div className="wp-core" />
+        </div>
+
+        <h1 className="wp-title">Drag a log here</h1>
+
+        <div className="wp-fmts">
+          {FORMAT_BADGES.map((f) => (
+            <span className="wp-fmt" key={f}>
+              {f}
+            </span>
+          ))}
+          <span className="wp-fmt wp-folder">📁 folder</span>
+        </div>
+
+        <div className="wp-actions">
+          <button className="wp-btn wp-primary" onClick={onOpenFile}>
+            Open file
+          </button>
+          <button className="wp-btn" onClick={onOpenFolder}>
+            Open folder
+          </button>
+        </div>
+      </section>
+
+      {/* recents */}
+      {recentList.length > 0 && (
+        <div className="wp-section">
+          <div className="wp-recents-head">
+            <span className="wp-eyebrow">Recent</span>
+            <span className="wp-cnt">{recentList.length}</span>
+          </div>
+          <div className="wp-rlist">
+            {recentList.map((r, i) => (
+              <div className="wp-ritem" key={i}>
+                <span className="wp-ico" aria-hidden>
+                  {recentIcon(r.kind)}
+                </span>
+                <span className="wp-path">{r.path}</span>
+                {r.lastQuery && (
+                  <span className="wp-lq">
+                    last: {r.lastQuery}
+                  </span>
+                )}
+                <span className="wp-meta">
+                  {r.size && (
+                    <>
+                      <span className="wp-sz">{r.size}</span>
+                      <br />
+                    </>
+                  )}
+                  {r.openedLabel ?? ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* workspace cards */}
+      {workspaces.length > 0 && (
+        <div className="wp-section">
+          <div className="wp-ws-head">
+            <span className="wp-eyebrow">Workspaces</span>
+          </div>
+          <div className="wp-wlist">
+            {workspaces.map((w) => (
+              <div className="wp-wcard" key={w.name}>
+                <div className="wp-wt">{w.name}</div>
+                <div className="wp-wm">
+                  <span className="wp-n">
+                    {w.fileCount} file{w.fileCount === 1 ? "" : "s"}
+                  </span>
+                  {w.lastOpened && <span>last {w.lastOpened}</span>}
+                  <span>
+                    {w.queryCount} quer{w.queryCount === 1 ? "y" : "ies"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {err && <div className="wp-err">{err}</div>}
     </div>
   );
 }
