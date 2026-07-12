@@ -1,3 +1,4 @@
+import { AppShell } from "./components/AppShell";
 export function App() {
-  return <div>LogRadar</div>;
+  return <AppShell><div style={{ padding: 24 }} /></AppShell>;
 }

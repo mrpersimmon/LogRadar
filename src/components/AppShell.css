@@ -1,0 +1,9 @@
+.app { min-height:100vh; }
+.topbar { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+.brand { display:flex; align-items:center; gap:9px; }
+.brand .radar { width:18px; height:18px; color:var(--scan); }
+.brand b { font-weight:700; font-size:14px; }
+.brand span { color:var(--text-dim); font-size:11px; }
+.spacer { flex:1; }
+.theme-toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; border:1px solid var(--border); background:var(--surface-2); color:var(--text-dim); padding:5px 11px; border-radius:999px; font-size:11px; font-weight:500; }
+.theme-toggle:hover { border-color:var(--scan); color:var(--scan); }
