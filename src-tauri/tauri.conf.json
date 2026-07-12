@@ -3,7 +3,7 @@
   "productName": "LogRadar",
   "version": "0.1.0",
   "identifier": "com.logradar.app",
-  "build": { "frontendDist": "../no-frontend" },
+  "build": { "frontendDist": "../dist", "devUrl": "http://localhost:5173" },
   "app": { "windows": [], "security": { "csp": null } },
   "plugins": {}
 }
