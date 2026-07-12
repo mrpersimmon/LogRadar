@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ExportDialog } from "./ExportDialog";
+import type { SearchRequest } from "../components/SearchPanel";
 
 const exportFileMock = vi.fn();
 vi.mock("../lib/ipc", () => ({
@@ -59,19 +60,55 @@ describe("ExportDialog", () => {
     });
   });
 
-  // I2: the "current-query-result" range needs the active search query, which
-  // isn't available until ④ lifts `useSearch` to App (I4). Rather than send an
-  // invalid payload, the option is DISABLED (greyed out + tooltip) so it can't
-  // be selected.
-  it("disables the current-query range option (greyed out + tooltip) until ④ lifts useSearch", () => {
-    render(<ExportDialog sessionId="s1" />);
+  // Task 2 (④a): the lift (T1) put `activeQuery` at App → ExportDialog receives
+  // it as a prop. The "current-query" range is now ENABLED (was disabled in
+  // ③b-fix because the active query wasn't reachable here). Selecting it sends
+  // the lifted `activeQuery` — a valid SearchRequest the Rust `export` command
+  // deserializes — instead of the match-all sentinel the other ranges use.
+  it("enables the current-query range and sends the lifted activeQuery when selected", async () => {
+    exportFileMock.mockResolvedValue(7);
+    const activeQuery: SearchRequest = {
+      root: { kind: "leaf", predicate: { kind: "text", text: "refused" } },
+    };
+    render(<ExportDialog sessionId="s1" activeQuery={activeQuery} />);
+
     const q = screen.getByRole("button", { name: "Current query" }) as HTMLButtonElement;
-    // disabled attribute → greyed out + non-interactive
-    expect(q.disabled).toBe(true);
-    expect(q.getAttribute("title")).toBe("available after search-state lift in ④");
-    // clicking a disabled button must NOT select it (no invalid payload sent)
+    // re-enabled: no longer greyed out / non-interactive
+    expect(q.disabled).toBe(false);
+
+    // selecting current-query → export sends the lifted activeQuery (not match-all)
     fireEvent.click(q);
-    expect(q.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    await waitFor(() => {
+      expect(exportFileMock).toHaveBeenCalledTimes(1);
+      const [, query] = exportFileMock.mock.calls[0];
+      // the EXACT lifted activeQuery object (referential equality) — proving the
+      // dialog forwards the lifted query, not a rebuilt/lossy match-all copy.
+      expect(query).toBe(activeQuery);
+    });
+  });
+
+  // Edge case: no activeQuery committed yet (activeQuery is null/undefined).
+  // The current-query range stays enabled, and selecting it falls back to the
+  // match-all sentinel — an empty query matches every line via line.contains(""),
+  // so "current query" with no query === all lines. Never an invalid payload.
+  it("falls back to the match-all SearchRequest for current-query when no activeQuery is set", async () => {
+    exportFileMock.mockResolvedValue(1204);
+    render(<ExportDialog sessionId="s1" />);
+
+    const q = screen.getByRole("button", { name: "Current query" }) as HTMLButtonElement;
+    expect(q.disabled).toBe(false);
+    fireEvent.click(q);
+    fireEvent.click(screen.getByRole("button", { name: "Export" }));
+
+    await waitFor(() => {
+      expect(exportFileMock).toHaveBeenCalledTimes(1);
+      const [, query] = exportFileMock.mock.calls[0];
+      expect(query).toMatchObject({
+        root: { kind: "leaf", predicate: { kind: "text", text: "" } },
+      });
+    });
   });
 
   it("preview reflects the selected columns (toggling File path off removes it)", () => {

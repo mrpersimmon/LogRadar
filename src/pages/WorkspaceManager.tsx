@@ -19,12 +19,17 @@ import {
   type Workspace,
 } from "../lib/ipc";
 import type { SessionsApi } from "../hooks/useSessions";
+import type { SearchRequest } from "../components/SearchPanel";
 import "./WorkspaceManager.css";
 
 export type WorkspaceManagerProps = {
   /** The open-files registry (so Save Current can read the open file paths).
    *  Optional — if omitted, Save Current saves an empty file list. */
   sessions?: SessionsApi;
+  /** The lifted active query from App (Task 1 ④a). Save Current includes it as
+   *  the workspace's single query (was `queries: []` in ③b because the query
+   *  wasn't reachable here). null/undefined until SearchPanel commits a query. */
+  activeQuery?: SearchRequest | null;
   /** Fired after a workspace is (re)loaded via the Open button. */
   onOpenWorkspace?: (ws: Workspace) => void;
   /** Close affordance. */
@@ -52,6 +57,7 @@ const MAX_QUERY_CHIPS = 2;
 
 export function WorkspaceManager({
   sessions,
+  activeQuery,
   onOpenWorkspace,
   onClose,
 }: WorkspaceManagerProps) {
@@ -100,9 +106,15 @@ export function WorkspaceManager({
     const files = sessions
       ? [...sessions.sessions.values()].map((s) => s.path)
       : [];
+    // Task 2 (④a): include the lifted `activeQuery` as the workspace's single
+    // query (was `queries: []` in ③b — the active query wasn't reachable here).
+    // The query is a full SearchRequest (keywords + level + time + excludes as
+    // the QueryNodeDto tree), so the saved workspace round-trips the exact query
+    // the user ran. null (no query committed yet) → empty queries list.
+    const queries = activeQuery ? [activeQuery] : [];
     setSaving(true);
     try {
-      await workspaceSave({ name, files, queries: [] });
+      await workspaceSave({ name, files, queries });
       setName("");
       await refresh();
     } catch (e) {
@@ -122,7 +134,9 @@ export function WorkspaceManager({
   }
 
   const openPaths = sessions ? [...sessions.sessions.values()].map((s) => s.path) : [];
-  const openQueryCount = 0;
+  // Task 2 (④a): the lifted activeQuery counts as the one query Save Current
+  // will persist (was always 0 in ③b — queries wasn't reachable here).
+  const openQueryCount = activeQuery ? 1 : 0;
 
   return (
     <div className="wm-scrim" onClick={onClose}>

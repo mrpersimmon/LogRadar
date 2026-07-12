@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { WorkspaceManager } from "./WorkspaceManager";
 import type { SessionsApi } from "../hooks/useSessions";
+import type { SearchRequest } from "../components/SearchPanel";
 
 const workspaceListMock = vi.fn();
 const workspaceLoadMock = vi.fn();
@@ -117,6 +118,41 @@ describe("WorkspaceManager", () => {
       expect(ws.name).toBe("My WS");
       expect(ws.files).toEqual(["logs/auth/a.log", "logs/api/c.log"]);
       expect(ws.queries).toEqual([]);
+    });
+  });
+
+  // Task 2 (④a): the lift (T1) put `activeQuery` at App → WorkspaceManager
+  // receives it as a prop. Save Current now includes the lifted `activeQuery`
+  // in the saved workspace's `queries` (was `queries: []` in ③b because the
+  // query wasn't reachable here). The active query is a full SearchRequest —
+  // keywords + level + time + excludes as the QueryNodeDto tree — so the saved
+  // workspace round-trips the exact query the user ran.
+  it("save current includes the lifted activeQuery in queries", async () => {
+    workspaceListMock.mockResolvedValue([]);
+    const sessions = stubSessions(["logs/auth/a.log"]);
+    const activeQuery: SearchRequest = {
+      root: { kind: "leaf", predicate: { kind: "text", text: "refused" } },
+    };
+    render(
+      <WorkspaceManager sessions={sessions} activeQuery={activeQuery} />,
+    );
+
+    fireEvent.change(screen.getByRole("textbox", { name: /workspace name/i }), {
+      target: { value: "Incident" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /save current/i }));
+
+    await waitFor(() => {
+      expect(workspaceSaveMock).toHaveBeenCalledTimes(1);
+      const ws = workspaceSaveMock.mock.calls[0][0] as {
+        name: string;
+        files: string[];
+        queries: unknown[];
+      };
+      expect(ws.name).toBe("Incident");
+      expect(ws.files).toEqual(["logs/auth/a.log"]);
+      // the lifted activeQuery is now saved as the workspace's single query
+      expect(ws.queries).toEqual([activeQuery]);
     });
   });
 

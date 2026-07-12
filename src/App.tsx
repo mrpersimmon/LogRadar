@@ -3,13 +3,14 @@
 // lifted `useSearch(activeSessionId, activeQuery, cap)` instance + the
 // `activeQuery` state, so the SAME search controller's matches are shared
 // across SearchPanel (results), VirtualLogView (hit highlight + jump), and —
-// in later tasks — ExportDialog (current-query export) + WorkspaceManager
+// as of Task 2 (④a) — ExportDialog (current-query export) + WorkspaceManager
 // (workspace-save-with-queries). SearchPanel builds the query and calls
 // `setActiveQuery` + `search.run()`; App's controller registry dedupes by
 // (sessionId, query, cap), so sharing one instance never double-scans.
 // Renders the active page inside AppShell (③a's topbar + theme toggle).
 // view === "main" → MainWindow (T7, now wired with the lifted search);
-// "export" → ExportDialog (T10); "workspace" → WorkspaceManager (T10);
+// "export" → ExportDialog (T10, now receives the lifted activeQuery);
+// "workspace" → WorkspaceManager (T10, now saves the lifted activeQuery);
 // otherwise the full WelcomePage (T10).
 
 import { useState } from "react";
@@ -59,11 +60,13 @@ export function App() {
       ) : view === "export" ? (
         <ExportDialog
           sessionId={sessions.activeId ?? ""}
+          activeQuery={activeQuery}
           onClose={() => setView("main")}
         />
       ) : view === "workspace" ? (
         <WorkspaceManager
           sessions={sessions}
+          activeQuery={activeQuery}
           onClose={() => setView("main")}
         />
       ) : (

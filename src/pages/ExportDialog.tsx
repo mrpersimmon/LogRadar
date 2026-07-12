@@ -28,13 +28,19 @@ export type ExportTarget = "file" | "clipboard";
 export type ExportDialogProps = {
   /** Active log session the export applies to. */
   sessionId: string;
+  /** The lifted active query from App (Task 1 ④a). The "current-query" range
+   *  forwards this — a valid SearchRequest the Rust `export` command
+   *  deserializes — instead of the match-all sentinel. null/undefined until
+   *  SearchPanel commits a query; then the range falls back to match-all. */
+  activeQuery?: SearchRequest | null;
   /** Close affordance (✕ / Cancel). */
   onClose?: () => void;
 };
 
-// I2: the "current-query" range needs the active search query, which isn't
-// available until ④ lifts `useSearch` to App (I4). Until then the option is
-// DISABLED (greyed out + tooltip) so an invalid payload can't be sent.
+// Task 2 (④a): the lift (T1) put `activeQuery` at App → ExportDialog receives
+// it as a prop, so the "current-query" range is now ENABLED (was disabled in
+// ③b-fix because the active query wasn't reachable here). Selecting it sends
+// the lifted `activeQuery` (a valid SearchRequest) — see `onExport` below.
 type RangeOption = {
   value: ExportRange;
   label: string;
@@ -43,12 +49,7 @@ type RangeOption = {
 };
 
 const RANGES: RangeOption[] = [
-  {
-    value: "current-query",
-    label: "Current query",
-    disabled: true,
-    title: "available after search-state lift in ④",
-  },
+  { value: "current-query", label: "Current query" },
   { value: "current-file", label: "Current file" },
   { value: "selection", label: "Selection" },
   { value: "all", label: "All open files" },
@@ -60,7 +61,8 @@ const RANGES: RangeOption[] = [
 // has no `root` → serde_json::from_value fails → export always errored. For
 // the ranges that don't need the active query (current-file / selection /
 // all) send a match-all SearchRequest — empty text matches every line via
-// `line.contains("")`. The "current-query" range is disabled until ④.
+// `line.contains("")`. The "current-query" range sends the lifted `activeQuery`
+// (Task 2 ④a); match-all is also the fallback when no query is committed yet.
 const MATCH_ALL_QUERY: SearchRequest = {
   root: { kind: "leaf", predicate: { kind: "text", text: "" } },
 };
@@ -112,9 +114,9 @@ function todayStamp(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export function ExportDialog({ sessionId, onClose }: ExportDialogProps) {
-  // I2: default range is "current-file" — "current-query" is disabled until ④
-  // lifts `useSearch` to App (the active query isn't available here yet).
+export function ExportDialog({ sessionId, activeQuery, onClose }: ExportDialogProps) {
+  // Default range is "current-file"; "current-query" is now selectable (re-enabled
+  // in Task 2 ④a) and sends the lifted `activeQuery` when chosen.
   const [range, setRange] = useState<ExportRange>("current-file");
   const [format, setFormat] = useState<ExportFormat>("raw");
   const [cols, setCols] = useState<Record<ExportColumn, boolean>>({
@@ -151,13 +153,19 @@ export function ExportDialog({ sessionId, onClose }: ExportDialogProps) {
     const targetStr = target === "file" ? path : "clipboard";
     setExporting(true);
     try {
-      // I2: send a VALID SearchRequest ({root:{...}}) the Rust `export` command
-      // can deserialize — NOT `{range, format}` (no `root` → serde fails →
-      // export always errors). All selectable ranges use the match-all query;
-      // "current-query" (which would send the active query) is disabled until ④.
+      // Task 2 (④a): send a VALID SearchRequest ({root:{...}}) the Rust `export`
+      // command can deserialize. The "current-query" range forwards the lifted
+      // `activeQuery` (the exact SearchRequest SearchPanel committed — keywords
+      // + level + time + excludes as the QueryNodeDto tree); the other ranges
+      // (current-file / selection / all) send the match-all sentinel (empty text
+      // matches every line via line.contains("")). When no query is committed
+      // yet (activeQuery null), current-query also falls back to match-all —
+      // an empty query matches all lines, so never an invalid payload.
+      const query =
+        range === "current-query" && activeQuery ? activeQuery : MATCH_ALL_QUERY;
       const written = await exportFile(
         sessionId,
-        MATCH_ALL_QUERY,
+        query,
         selectedColumns,
         targetStr,
       );
