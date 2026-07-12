@@ -1,20 +1,24 @@
-// WelcomePage (Task 10 ③b, FULL rewrite) — the landing screen. A drop zone
-// with the signature radar-sweep animation (CSS conic-gradient beam, rotating
-// under `prefers-reduced-motion: reduce` → static), format badges, and Open
-// file / Open folder buttons; a recents list (each recent shows its path + a
-// last-query chip); and workspace cards. Opening a file wires the full chain:
-// openDialog → `sessions.open` (→ `openFile`) → `setView("main")` — closing the
-// gap noted in T7 (the router flips to MainWindow on open).
+// WelcomePage (Task 10 ③b, FULL rewrite; Task 3 ④a recents wiring) — the landing
+// screen. A drop zone with the signature radar-sweep animation (CSS conic-
+// gradient beam, rotating under `prefers-reduced-motion: reduce` → static),
+// format badges, and Open file / Open folder buttons; a recents list loaded
+// from the `logradar-recents` localStorage store on mount (each recent shows its
+// path + an "open" affordance, click to re-open); and workspace cards. Opening a
+// file — via the dialog OR by clicking a recent — wires the full chain:
+// openDialog/row-click → `sessions.open` (→ `openFile`) → `addRecent` (bump to
+// most-recent-first) → `setView("main")` — closing the gap noted in T7 (the
+// router flips to MainWindow on open).
 //
 // Visual structure ported from
 // `.superpowers/brainstorm/28981-1783785226/content/welcome-v3.html` (drop /
 // sweep / fmts / actions / recents / ritem / lq / ws-head / wlist / wcard),
 // restyled with ③a's premium CSS-variable tokens.
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { SessionsApi } from "../hooks/useSessions";
 import type { View } from "../router";
+import { getRecents, addRecent } from "../lib/recents";
 import "./WelcomePage.css";
 
 export type RecentKind = "file" | "archive" | "folder";
@@ -64,17 +68,19 @@ export function WelcomePage({
   workspaces = [],
 }: WelcomePageProps) {
   const [err, setErr] = useState<string | null>(null);
+  // Recents loaded from localStorage on mount. Only used when no explicit
+  // `recents` prop is supplied (presentational override, e.g. tests / a
+  // future IPC-derived list). `recents` prop wins when present.
+  const [loadedRecents, setLoadedRecents] = useState<string[]>([]);
+  useEffect(() => {
+    if (recents) return; // presentational mode — prop wins, skip the load
+    setLoadedRecents(getRecents());
+  }, [recents]);
 
-  // Derived recents: if no explicit list is supplied, build one from the
-  // currently-open sessions (path + line count, no last-query chip).
+  // Recents list: explicit prop wins; otherwise the localStorage-loaded paths
+  // (paths only — no size/lastQuery, since the store persists just paths).
   const recentList: RecentEntry[] =
-    recents ??
-    [...sessions.sessions.values()].map((s) => ({
-      path: s.path,
-      size: `${s.lineCount.toLocaleString()} lines`,
-      openedLabel: "open",
-      kind: "file" as const,
-    }));
+    recents ?? loadedRecents.map((p) => ({ path: p, kind: "file" as const }));
 
   async function openPicked(getter: () => Promise<unknown>) {
     setErr(null);
@@ -82,6 +88,21 @@ export function WelcomePage({
       const picked = await getter();
       if (typeof picked !== "string") return; // cancelled / not a file path
       await sessions.open(picked);
+      addRecent(picked); // record newly-opened file (most-recent-first)
+      setView("main");
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  // Re-open flow: clicking a recent row re-opens that file (openFile via
+  // sessions.open), bumps it to the front of recents (addRecent dedupes), then
+  // flips to MainWindow.
+  async function openRecent(path: string) {
+    setErr(null);
+    try {
+      await sessions.open(path);
+      addRecent(path);
       setView("main");
     } catch (e) {
       setErr(String(e));
@@ -135,8 +156,21 @@ export function WelcomePage({
             <span className="wp-cnt">{recentList.length}</span>
           </div>
           <div className="wp-rlist">
-            {recentList.map((r, i) => (
-              <div className="wp-ritem" key={i}>
+            {recentList.map((r) => (
+              <div
+                className="wp-ritem"
+                key={r.path}
+                role="button"
+                tabIndex={0}
+                aria-label={`open ${r.path}`}
+                onClick={() => openRecent(r.path)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    void openRecent(r.path);
+                  }
+                }}
+              >
                 <span className="wp-ico" aria-hidden>
                   {recentIcon(r.kind)}
                 </span>
@@ -153,7 +187,7 @@ export function WelcomePage({
                       <br />
                     </>
                   )}
-                  {r.openedLabel ?? ""}
+                  <span className="wp-open">open</span>
                 </span>
               </div>
             ))}

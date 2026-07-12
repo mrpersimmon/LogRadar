@@ -19,9 +19,23 @@ vi.mock("../lib/ipc", () => ({
 const dialogMock = vi.fn();
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: () => dialogMock() }));
 
+// Task 3: recents store is mocked so WelcomePage's mount-load + re-open flow can
+// be driven without touching real localStorage. Defaults to [] (no recents).
+const { getRecentsMock, addRecentMock } = vi.hoisted(() => ({
+  getRecentsMock: vi.fn(),
+  addRecentMock: vi.fn(),
+}));
+vi.mock("../lib/recents", () => ({
+  getRecents: () => getRecentsMock(),
+  addRecent: (path: string) => addRecentMock(path),
+}));
+
 beforeEach(() => {
   openFileMock.mockReset();
   dialogMock.mockReset();
+  getRecentsMock.mockReset();
+  addRecentMock.mockReset();
+  getRecentsMock.mockReturnValue([]); // default: no recents on mount
 });
 
 /** Harness so the test can hand a REAL `useSessions()` instance (whose `open`
@@ -120,5 +134,66 @@ describe("WelcomePage", () => {
     // give the microtask a tick to settle
     await waitFor(() => expect(openFileMock).not.toHaveBeenCalled());
     expect(setView).not.toHaveBeenCalled();
+  });
+
+  // Task 3: WelcomePage loads recents from localStorage (getRecents) on mount
+  // and renders them as clickable rows. Each row shows the path + an "open"
+  // affordance; clicking a recent re-opens it through the full chain:
+  // openFile (via sessions.open) → addRecent (bump to most-recent-first) →
+  // setView("main").
+  it("loads and renders recents on mount (localStorage via getRecents)", async () => {
+    getRecentsMock.mockReturnValue(["logs/x.log", "logs/y.log"]);
+    render(<Harness setView={vi.fn()} />);
+
+    // recents load in a useEffect (after first paint) → wait for them
+    await waitFor(() => {
+      expect(screen.getByText("logs/x.log")).toBeTruthy();
+      expect(screen.getByText("logs/y.log")).toBeTruthy();
+    });
+    expect(getRecentsMock).toHaveBeenCalled();
+  });
+
+  it("re-opens a recent on click: openFile → addRecent → setView('main')", async () => {
+    getRecentsMock.mockReturnValue(["/rec/a.log"]);
+    openFileMock.mockResolvedValue({
+      sessionId: "s1",
+      lineCount: 3,
+      encoding: "Utf8",
+      isJson: false,
+      timestampFmt: "iso",
+    });
+    const setView = vi.fn();
+    render(<Harness setView={setView} />);
+
+    // The recent row is a role=button with aria-label "open <path>"
+    const row = await screen.findByRole("button", { name: /open \/rec\/a\.log/i });
+    fireEvent.click(row);
+
+    await waitFor(() => {
+      expect(openFileMock).toHaveBeenCalledWith("/rec/a.log");
+      expect(addRecentMock).toHaveBeenCalledWith("/rec/a.log");
+      expect(setView).toHaveBeenCalledWith("main");
+    });
+  });
+
+  it("records a newly dialog-opened file into recents (addRecent on open)", async () => {
+    dialogMock.mockResolvedValue("/dialog/picked.log");
+    openFileMock.mockResolvedValue({
+      sessionId: "s2",
+      lineCount: 1,
+      encoding: "Utf8",
+      isJson: false,
+      timestampFmt: "iso",
+    });
+    const setView = vi.fn();
+    render(<Harness setView={setView} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /open file/i }));
+
+    await waitFor(() => {
+      expect(openFileMock).toHaveBeenCalledWith("/dialog/picked.log");
+      expect(addRecentMock).toHaveBeenCalledWith("/dialog/picked.log");
+      expect(setView).toHaveBeenCalledWith("main");
+    });
   });
 });
