@@ -354,6 +354,21 @@ mod search_tests {
     }
 }
 
+use crate::workspace::Workspace;
+
+#[tauri::command]
+pub async fn workspace_save(state: State<'_, AppState>, ws: Workspace) -> Result<(), String> {
+    crate::workspace::save(&ws)
+}
+#[tauri::command]
+pub async fn workspace_load(state: State<'_, AppState>, name: String) -> Result<Workspace, String> {
+    crate::workspace::load(&name)
+}
+#[tauri::command]
+pub async fn workspace_list(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    crate::workspace::list()
+}
+
 #[cfg(test)]
 mod export_tests {
     use super::*;
