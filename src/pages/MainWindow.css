@@ -1,0 +1,117 @@
+/* MainWindow — the assembled main screen. Ports the full-layout flex grid
+   from main-window-v7.html (and its token-adapted twin premium-redesign.html):
+   top tab strip (full width) / body row [FileTree | mw-main] / status bar.
+   Every color is a ③a premium theme token (src/theme/tokens.css); the
+   sub-components own their own CSS — this file only provides the layout
+   containers that slot them into place. No hardcoded colors. */
+
+.mw {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* The TabStrip component renders `.tab-strip` itself (full width, surface-2
+   bg, border-bottom). It sits at the top of the column. */
+
+/* Body: sidebar tree (left) + main column (right). Fills the space between the
+   tab strip and the status bar. */
+.mw-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* `.file-tree` (rendered by FileTree) is width:208 / flex-shrink:0; `.mw-main`
+   takes the remaining horizontal space and stacks the view + search panel. */
+.mw-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Center top: log view + right minimap, side by side. Fills above the search
+   panel. `.log-view` (flex:1) and `.trace` (width:30 / flex-shrink:0) own
+   their own CSS. */
+.mw-view {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* Bottom search panel. `.sp` (rendered by SearchPanel) is flex-shrink:0 with a
+   border-top; here we give it a viewport-responsive height so the results area
+   (`.results` is flex:1 / overflow:auto inside it) gets a real scroll region. */
+.mw-main .sp {
+  height: 36vh;
+  min-height: 240px;
+  max-height: 60vh;
+}
+
+/* Empty state (no active session): centered radar glyph + hint. Keeps the
+   chrome (tabs/sidebar/status) alive so the user sees the app is ready. */
+.mw-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-faint);
+  background: var(--surface);
+}
+.mw-empty-glyph {
+  font-size: 40px;
+  color: var(--scan);
+  opacity: 0.5;
+  line-height: 1;
+}
+.mw-empty-title {
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.mw-empty-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+/* Status bar (full width, bottom). Ports premium-redesign.html's `.status`. */
+.mw-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 14px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.mw-status-sep {
+  color: var(--text-faint);
+}
+.mw-status-enc {
+  color: var(--text-dim);
+}
+.mw-status-jump {
+  color: var(--scan);
+}
+
+@media (max-width: 720px) {
+  /* On narrow viewports, hide the sidebar tree so the log view gets room.
+     (Tabs + search still work; the tree is a secondary navigator.) */
+  .file-tree {
+    display: none;
+  }
+  .mw-main .sp {
+    height: 40vh;
+    min-height: 200px;
+  }
+}

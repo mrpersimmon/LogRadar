@@ -38,6 +38,11 @@ export type VirtualLogViewProps = {
   highlightTerm?: string;
   /** Called with the absolute line number when a row is clicked. */
   onJumpToLine?: (line: number) => void;
+  /** Reports the ACTUAL visible viewport (no overscan) as the user scrolls, so
+   *  a parent (e.g. MainWindow) can drive a Minimap's viewport marker. Fires
+   *  only when the visible window changes (deduped), never on sub-row scrolls.
+   *  `[start, end)` is 0-based, end exclusive, clamped to `[0, totalLines]`. */
+  onViewportChange?: (start: number, end: number) => void;
 };
 
 const OVERSCAN = 5; // extra rows above/below the viewport so fast scrolls don't flash blank
@@ -119,6 +124,7 @@ export function VirtualLogView({
   jumpToLine,
   highlightTerm,
   onJumpToLine,
+  onViewportChange,
 }: VirtualLogViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   // The visible window we are asking `getLines` for. `count` is 0 until the
@@ -135,6 +141,9 @@ export function VirtualLogView({
   // Monotonic request id: a late-resolving getLines from an older scroll is
   // ignored so stale chunks never overwrite the current view.
   const reqId = useRef(0);
+  // Last visible viewport reported to the parent via `onViewportChange`, so a
+  // sub-row scroll (same visible window) doesn't re-fire the callback.
+  const lastVp = useRef<{ s: number; e: number }>({ s: -1, e: -1 });
 
   const hitSet = hits ? new Set(hits) : null;
   const pad = Math.max(6, String(Math.max(0, totalLines - 1)).length);
@@ -150,6 +159,14 @@ export function VirtualLogView({
     setWin((prev) =>
       prev.start === start && prev.count === count ? prev : { start, count },
     );
+    // Report the ACTUAL visible viewport (no overscan) so the Minimap's sweep
+    // reflects what the user sees, not the overscanned fetch window. Deduped.
+    const vpStart = Math.max(0, rawStart);
+    const vpEnd = Math.min(totalLines, rawStart + Math.ceil(vh / rowHeight));
+    if (lastVp.current.s !== vpStart || lastVp.current.e !== vpEnd) {
+      lastVp.current = { s: vpStart, e: vpEnd };
+      onViewportChange?.(vpStart, vpEnd);
+    }
   };
 
   // Measure on mount + when totalLines/rowHeight change; recompute on scroll.
