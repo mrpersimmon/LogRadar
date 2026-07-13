@@ -1,7 +1,7 @@
 // WelcomePage (Task 10 ③b, FULL rewrite; Task 3 ④a recents wiring) — the landing
 // screen. A drop zone with the signature radar-sweep animation (CSS conic-
 // gradient beam, rotating under `prefers-reduced-motion: reduce` → static),
-// format badges, and Open file / Open folder buttons; a recents list loaded
+// format badges, and an Open file button; a recents list loaded
 // from the `logradar-recents` localStorage store on mount (each recent shows its
 // path + an "open" affordance, click to re-open); and workspace cards. Opening a
 // file — via the dialog OR by clicking a recent — wires the full chain:
@@ -110,7 +110,6 @@ export function WelcomePage({
   }
 
   const onOpenFile = () => openPicked(() => openDialog({ multiple: false }));
-  const onOpenFolder = () => openPicked(() => openDialog({ directory: true }));
 
   return (
     <div className="wp">
@@ -135,15 +134,11 @@ export function WelcomePage({
               {f}
             </span>
           ))}
-          <span className="wp-fmt wp-folder">📁 folder</span>
         </div>
 
         <div className="wp-actions">
           <button className="wp-btn wp-primary" onClick={onOpenFile}>
             Open file
-          </button>
-          <button className="wp-btn" onClick={onOpenFolder}>
-            Open folder
           </button>
         </div>
       </section>
