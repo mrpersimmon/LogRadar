@@ -317,3 +317,38 @@ export function useCrossFileSearch(
   };
   return { results, run, cancel };
 }
+
+// ---------------------------------------------------------------------------
+// Archive extract + scan_dir client wrappers (Task 7). `extractArchive`
+// streams `ExtractProgress` over a Tauri 2.x `Channel` — the same pattern as
+// `useSearch` above: construct `Channel`, set `onmessage`, pass it as the
+// `onEvent` arg (Tauri maps JS `onEvent` → Rust `on_event: Channel<...>` and
+// routes `on_event.send(ev)` into `channel.onmessage` here).
+//
+// Wire shape mirrors the Rust DTOs in src-tauri/src/commands.rs (verified):
+//   ExtractProgress  #[serde(tag = "type", rename_all = "camelCase")]
+//     File { done, total, current_file } → { type: "file", done, total, currentFile }
+//     Done { extracted_dir, log_count }   → { type: "done", extractedDir, logCount }
+//   ExtractResponse { extracted_dir, log_files } → { extractedDir, logFiles }
+//   ScanDirResponse { log_files, archive_hint }   → { logFiles, archiveHint }
+// ---------------------------------------------------------------------------
+
+export type ExtractProgress =
+  | { type: "file"; done: number; total: number; currentFile: string }
+  | { type: "done"; extractedDir: string; logCount: number };
+
+export type ExtractResponse = { extractedDir: string; logFiles: string[] };
+export type ScanDirResponse = { logFiles: string[]; archiveHint: string[] };
+
+export async function extractArchive(
+  path: string,
+  onProgress: (p: ExtractProgress) => void,
+): Promise<ExtractResponse> {
+  const ch = new Channel<ExtractProgress>();
+  ch.onmessage = onProgress;
+  return invoke<ExtractResponse>("extract_archive", { path, onEvent: ch });
+}
+
+export async function scanDir(path: string): Promise<ScanDirResponse> {
+  return invoke<ScanDirResponse>("scan_dir", { path });
+}

@@ -5,6 +5,8 @@ import {
   getSearchController,
   useSearch,
   useCrossFileSearch,
+  extractArchive,
+  scanDir,
   type SearchEvent,
 } from "./ipc";
 
@@ -316,5 +318,28 @@ describe("useCrossFileSearch aggregates per-session matches", () => {
       .filter((c) => c[0] === "search")
       .map((c) => (c[1] as { sessionId: string }).sessionId);
     expect(searchedSids).toEqual(ids.slice(0, 8));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ipc archive: scanDir typed wrapper over the `scan_dir` command (Task 7).
+// The brief's test sketches its own `vi.mock("@tauri-apps/api/core", ...)` with
+// `vi.importActual` (real `Channel`) + a fresh `invoke: vi.fn()`. Appended
+// verbatim, that second `vi.mock` would OVERRIDE this file's module-level mock
+// (above, which stubs `Channel` with `MockChannel`) — the real `Channel`
+// constructor touches `window.__TAURI_INTERNALS__` (absent in jsdom) and throws,
+// breaking every search-controller test above. So this case reuses the existing
+// `invokeMock` (the established handle throughout this file) instead of a
+// competing mock. The load-bearing assertions are the brief's verbatim:
+// `scan_dir` invoked with `{ path }`, and the response's `logFiles` pass-through.
+// `extractArchive` is imported above so its missing export turns the file red
+// pre-implementation; its streaming shape is verified in Task 8's e2e.
+// ---------------------------------------------------------------------------
+describe("ipc archive", () => {
+  it("scanDir invokes scan_dir with the path", async () => {
+    invokeMock.mockResolvedValue({ logFiles: ["a.log"], archiveHint: [] });
+    const res = await scanDir("/some/dir");
+    expect(invokeMock).toHaveBeenCalledWith("scan_dir", { path: "/some/dir" });
+    expect(res.logFiles).toEqual(["a.log"]);
   });
 });
