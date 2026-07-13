@@ -337,3 +337,18 @@
   font-size: 12px;
   font-family: var(--font-mono);
 }
+
+/* Task 9: archive-hint notice — surfaced after Open folder when `scan_dir`
+   found archives inside the picked dir. Subtle info styling (not an error):
+   border + tinted background keyed to --warn so it reads as a nudge, not an
+   alert. */
+.wp-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  border-radius: 8px;
+  padding: 8px 12px;
+  z-index: 1;
+}

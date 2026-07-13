@@ -196,4 +196,30 @@ describe("WelcomePage", () => {
       expect(setView).toHaveBeenCalledWith("main");
     });
   });
+
+  // Task 9: WelcomePage exposes three entry points — Open file (filtered to
+  // .log/.txt), Open archive (.zip/.gz, streaming progress via ExtractProgress),
+  // and Open folder (directory scan; shows an archive-hint notice if archives
+  // were found inside). This test pins the three affordances' presence so a
+  // future refactor can't silently drop one (Open folder was removed in 995fdbc
+  // and is now restored).
+  it("shows Open archive and Open folder buttons", () => {
+    render(
+      <WelcomePage
+        sessions={
+          {
+            sessions: new Map(),
+            activeId: null,
+            open: vi.fn(),
+            close: vi.fn(),
+            setActive: vi.fn(),
+          } as never
+        }
+        setView={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /open archive/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /open folder/i })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /open file/i })).toBeTruthy();
+  });
 });

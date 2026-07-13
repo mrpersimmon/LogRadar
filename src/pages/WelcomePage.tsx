@@ -1,13 +1,18 @@
-// WelcomePage (Task 10 ③b, FULL rewrite; Task 3 ④a recents wiring) — the landing
-// screen. A drop zone with the signature radar-sweep animation (CSS conic-
-// gradient beam, rotating under `prefers-reduced-motion: reduce` → static),
-// format badges, and an Open file button; a recents list loaded
-// from the `logradar-recents` localStorage store on mount (each recent shows its
-// path + an "open" affordance, click to re-open); and workspace cards. Opening a
-// file — via the dialog OR by clicking a recent — wires the full chain:
-// openDialog/row-click → `sessions.open` (→ `openFile`) → `addRecent` (bump to
-// most-recent-first) → `setView("main")` — closing the gap noted in T7 (the
-// router flips to MainWindow on open).
+// WelcomePage (Task 10 ③b, FULL rewrite; Task 3 ④a recents wiring; Task 9
+// Open archive / Open folder / Open file filter) — the landing screen. A drop
+// zone with the signature radar-sweep animation (CSS conic-gradient beam,
+// rotating under `prefers-reduced-motion: reduce` → static), format badges,
+// and THREE open entry points: Open file (filtered to .log/.txt →
+// `sessions.open`), Open archive (.zip/.gz → `sessions.openArchive` streaming
+// progress into the ExtractProgress widget), and Open folder (`directory:
+// true` → `sessions.openFolder`, surfacing an archive-hint notice if archives
+// were found inside); a recents list loaded from the `logradar-recents`
+// localStorage store on mount (each recent shows its path + an "open"
+// affordance, click to re-open); and workspace cards. Opening a file — via the
+// dialog OR by clicking a recent — wires the full chain: openDialog/row-click
+// → `sessions.open` (→ `openFile`) → `addRecent` (bump to most-recent-first)
+// → `setView("main")` — closing the gap noted in T7 (the router flips to
+// MainWindow on open).
 //
 // Visual structure ported from
 // `.superpowers/brainstorm/28981-1783785226/content/welcome-v3.html` (drop /
@@ -19,6 +24,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type { SessionsApi } from "../hooks/useSessions";
 import type { View } from "../router";
 import { getRecents, addRecent } from "../lib/recents";
+import { ExtractProgress } from "../components/ExtractProgress";
 import "./WelcomePage.css";
 
 export type RecentKind = "file" | "archive" | "folder";
@@ -68,6 +74,18 @@ export function WelcomePage({
   workspaces = [],
 }: WelcomePageProps) {
   const [err, setErr] = useState<string | null>(null);
+  // Task 9: extract progress (null when not extracting). Set when Open archive
+  // begins, updated per `file` event from `sessions.openArchive`, cleared on
+  // completion / error. Drives the ExtractProgress widget below.
+  const [progress, setProgress] = useState<{
+    done: number;
+    total: number;
+    currentFile: string;
+  } | null>(null);
+  // Task 9: archive hint surfaced after Open folder when `scan_dir` found
+  // archives inside the picked directory. Null = no hint to show; non-empty =
+  // the notice nudges the user toward Open archive instead.
+  const [archiveHint, setArchiveHint] = useState<string[] | null>(null);
   // Recents loaded from localStorage on mount. Only used when no explicit
   // `recents` prop is supplied (presentational override, e.g. tests / a
   // future IPC-derived list). `recents` prop wins when present.
@@ -109,7 +127,69 @@ export function WelcomePage({
     }
   }
 
-  const onOpenFile = () => openPicked(() => openDialog({ multiple: false }));
+  // Task 9: Open file — single pick, filtered to .log/.txt (the formats a plain
+  // log file uses; archives + folders have their own entry points below).
+  const onOpenFile = () =>
+    openPicked(() =>
+      openDialog({
+        multiple: false,
+        filters: [{ name: "Log", extensions: ["log", "txt"] }],
+      }),
+    );
+
+  // Task 9: Open folder — `directory: true` pick, scanned by `scan_dir`; opens
+  // every found log via `sessions.openFolder`. If archives were found inside
+  // the dir, surface the archive-hint notice and STAY on the welcome page so
+  // the notice is actually visible (App swaps pages via a ternary on `view`,
+  // so `setView("main")` would unmount WelcomePage and discard the hint state
+  // — the notice could never render). When no archives were found, flip to
+  // main as usual so the opened logs are shown.
+  const onOpenFolder = async () => {
+    setErr(null);
+    try {
+      const picked = await openDialog({ directory: true });
+      if (typeof picked !== "string") return; // cancelled
+      const { archiveHint: hint } = await sessions.openFolder(picked);
+      if (hint.length > 0) {
+        setArchiveHint(hint); // stay on welcome so the notice renders
+      } else {
+        setView("main");
+      }
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  // Task 9: Open archive — single pick filtered to .zip/.gz; `extract_archive`
+  // streams `ExtractProgress` events (type "file" carries done/total/currentFile;
+  // type "done" closes out) so the ExtractProgress widget advances bar + label
+  // live. On completion each extracted log is opened (by `openArchive` itself)
+  // and the view flips to main.
+  const onOpenArchive = async () => {
+    setErr(null);
+    try {
+      const picked = await openDialog({
+        multiple: false,
+        filters: [{ name: "Archive", extensions: ["zip", "gz"] }],
+      });
+      if (typeof picked !== "string") return; // cancelled
+      setProgress({ done: 0, total: 0, currentFile: "" });
+      await sessions.openArchive(picked, (p) => {
+        if (p.type === "file") {
+          setProgress({
+            done: p.done,
+            total: p.total,
+            currentFile: p.currentFile,
+          });
+        }
+      });
+      setProgress(null);
+      setView("main");
+    } catch (e) {
+      setErr(String(e));
+      setProgress(null);
+    }
+  };
 
   return (
     <div className="wp">
@@ -140,7 +220,33 @@ export function WelcomePage({
           <button className="wp-btn wp-primary" onClick={onOpenFile}>
             Open file
           </button>
+          <button className="wp-btn" onClick={onOpenArchive}>
+            Open archive
+          </button>
+          <button className="wp-btn" onClick={onOpenFolder}>
+            Open folder
+          </button>
         </div>
+
+        {/* Task 9: live extract progress — shown only while Open archive is
+            streaming `file` events; null otherwise. */}
+        {progress && (
+          <ExtractProgress
+            done={progress.done}
+            total={progress.total}
+            currentFile={progress.currentFile}
+          />
+        )}
+
+        {/* Task 9: archive-hint notice — after Open folder, if `scan_dir` found
+            archives inside the picked dir, nudge the user toward Open archive
+            (the folder scan opens logs but skips archives needing extraction). */}
+        {archiveHint && archiveHint.length > 0 && (
+          <div className="wp-hint" role="status">
+            Found {archiveHint.length} archive
+            {archiveHint.length === 1 ? "" : "s"} — use Open archive
+          </div>
+        )}
       </section>
 
       {/* recents */}
