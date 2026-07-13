@@ -13,6 +13,16 @@
   display: flex;
   flex-direction: column;
   gap: 26px;
+  /* AppShell's `.app` is now a bounded flex column (height:100vh, overflow:
+     hidden), so as a flex item this page must fill the remaining height and
+     scroll INTERNALLY when its content is taller than the viewport — otherwise
+     the bottom (recents / workspace cards) would be clipped with no scroll.
+     `flex:1` fills; `min-height:0` lets it shrink below content so overflow
+     engages; `overflow:auto` scrolls. (MainWindow/SplitView already have their
+     own internal scroll + flex:1, so they don't need this.) */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 /* drop zone */

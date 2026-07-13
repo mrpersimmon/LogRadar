@@ -1,5 +1,14 @@
-.app { min-height:100vh; }
-.topbar { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); }
+/* `.app` is a BOUNDED flex column: `height:100vh` bounds it to the window,
+   `display:flex; flex-direction:column` makes `{children}` (the page, e.g.
+   `.mw`) a flex item whose `flex:1` fills the space below the topbar, and
+   `overflow:hidden` prevents page scroll — each view manages its own internal
+   scroll (VirtualLogView / SplitView / `.wp`). Without `display:flex` here,
+   `.mw`'s `flex:1` is inert (flex-item property on a non-flex parent), so `.mw`
+   grew to content height (VirtualLogView's huge line-spacer) and the SearchPanel
+   (36vh, the last child) fell below the fold. `min-height:0` lets flex children
+   shrink below their content size so their internal `overflow:auto` engages. */
+.app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.topbar { display:flex; align-items:center; gap:14px; padding:10px 16px; border-bottom:1px solid var(--border); background:var(--surface); flex-shrink:0; }
 .brand { display:flex; align-items:center; gap:9px; }
 .brand .radar { width:18px; height:18px; color:var(--scan); }
 .brand b { font-weight:700; font-size:14px; }

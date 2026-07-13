@@ -503,14 +503,42 @@ describe("SearchPanel results", () => {
     render(<SearchPanel sessionId="s1" filePath="a.log" />);
     fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
     expect(getLinesMock).toHaveBeenCalledWith("s1", 124, expect.any(Number));
-    expect(await screen.findByText(/refused/)).toBeTruthy();
+    // Issue 1: content is fetched for EVERY match (2 here), so each renders.
+    expect((await screen.findAllByText(/refused/)).length).toBe(2);
   });
-  it("shows a count of remaining matches after the first expanded line", async () => {
-    useSearchMock.mockReturnValue(fakeCtrl({ matches: [124, 231, 400], status: "done" }));
-    getLinesMock.mockResolvedValue(["2026-07-11 14:22:01 ERROR DB connection refused"]);
-    render(<SearchPanel sessionId="s1" filePath="a.log" />);
+  // Issue 1 fix: the expanded row must render EVERY matching line (line number
+  // + content), not just matches[0] + a "还有 N 行" truncation. Asserts all 5
+  // matches render AND each row is jump-clickable (onJumpToLine with its line).
+  it("renders ALL matching lines (not just the first) when a row is expanded (Issue 1)", async () => {
+    useSearchMock.mockReturnValue(
+      fakeCtrl({ matches: [124, 231, 400, 512, 700], status: "done" }),
+    );
+    getLinesMock.mockResolvedValue(["matched line content"]);
+    render(<SearchPanel sessionId="s1" filePath="a.log" onJumpToLine={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
-    expect(await screen.findByText(/2\s*more|还有\s*2/i)).toBeTruthy();
+    // ALL 5 match line numbers render (previously only 124 + "还有 4 行")
+    expect(await screen.findByText("124")).toBeTruthy();
+    expect(screen.getByText("231")).toBeTruthy();
+    expect(screen.getByText("400")).toBeTruthy();
+    expect(screen.getByText("512")).toBeTruthy();
+    expect(screen.getByText("700")).toBeTruthy();
+    // the "还有 N 行" truncation is gone
+    expect(screen.queryByText(/还有/)).toBeNull();
+  });
+
+  it("makes each rendered match row jump-clickable (calls onJumpToLine with its line number)", async () => {
+    const onJumpToLine = vi.fn();
+    useSearchMock.mockReturnValue(fakeCtrl({ matches: [124, 231], status: "done" }));
+    getLinesMock.mockResolvedValue(["content"]);
+    render(
+      <SearchPanel sessionId="s1" filePath="a.log" onJumpToLine={onJumpToLine} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
+    await screen.findByText("124");
+    fireEvent.click(screen.getByRole("button", { name: /jump to line 124/i }));
+    expect(onJumpToLine).toHaveBeenCalledWith(124);
+    fireEvent.click(screen.getByRole("button", { name: /jump to line 231/i }));
+    expect(onJumpToLine).toHaveBeenCalledWith(231);
   });
   it("collapses the expanded rows on a second click", async () => {
     useSearchMock.mockReturnValue(fakeCtrl({ matches: [124], status: "done" }));

@@ -237,6 +237,11 @@ export const EMPTY_QUERY: SearchRequest = {
  *  harmless — the hook's sentinel slots are stable — but this keeps it tidy). */
 const EMPTY_SID_LIST: string[] = [];
 
+/** Stable empty array for the expanded-row fetch-effect dependency when nothing
+ *  is expanded (so the dep is referentially stable across re-renders instead
+ *  of a fresh `[]` each time). */
+const EMPTY_MATCHES: number[] = [];
+
 /** Walk the query tree; return the first `text` predicate's term. Used by App
  *  to derive VirtualLogView's `highlightTerm` (the keyword wrapped in
  *  `<mark class="hit">` inside matched lines) from the active SearchRequest.
@@ -282,7 +287,13 @@ export function SearchPanel({
   // WHICH session's row is open (one row per matched file). Single-session
   // mode collapses to expandedId === sessionId.
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [lineContent, setLineContent] = useState<string | null>(null);
+  // Issue 1 fix: line content for EVERY matching line in the expanded row (was a
+  // single `string | null` for matches[0] only). Keyed by line number so each
+  // rendered match row can look up its content; populated by the fetch effect
+  // below (Promise.all over the row's `matches`).
+  const [lineContents, setLineContents] = useState<Map<number, string>>(
+    new Map(),
+  );
   // runTick: an explicit "please run now" signal. The effect below fires ONLY on
   // this tick (not on every query/form change), so editing the form doesn't
   // auto-fire searches. Because the effect runs AFTER the render commit, its
@@ -299,7 +310,7 @@ export function SearchPanel({
     setHistoryIndex(-1);
     setHistoryOpen(false);
     setExpandedId(null);
-    setLineContent(null);
+    setLineContents(new Map());
     setForm(EMPTY_FORM);
     lastRunSig.current = null;
   }, [sessionId]);
@@ -334,28 +345,38 @@ export function SearchPanel({
   const runFn = crossMode ? cross.run : active.run;
   const cancelFn = crossMode ? cross.cancel : active.cancel;
 
-  // The expanded row + its first match line number (for the line-content fetch
-  // + the jump click). Null when nothing is expanded or the expanded row has
-  // no matches.
+  // The expanded row (null when nothing is expanded). `expandedMatches` is the
+  // row's match list (a referentially-stable snapshot ref from the controller,
+  // so the fetch-effect dep only changes when a batch actually arrives — never
+  // on a plain re-render). EMPTY_MATCHES keeps it stable when nothing is open.
   const expandedRow = expandedId ? rows.find((r) => r.sessionId === expandedId) : null;
-  const expandedFirst =
-    expandedRow && expandedRow.matches.length > 0 ? expandedRow.matches[0] : null;
+  const expandedMatches = expandedRow?.matches ?? EMPTY_MATCHES;
 
-  // Fetch the expanded row's first matching line content, so the expand shows
-  // real decoded text (fetched via ③a's `getLines`). A monotonic request id
-  // ignores stale fetches from an older match set.
+  // Issue 1: fetch content for EVERY matching line in the expanded row (was:
+  // only matches[0] via getLines(expandedId, expandedFirst, 1)). The `matches`
+  // array holds all matched line numbers; we fetch each one's decoded content
+  // via getLines(sid, n, 1) in parallel and index them by line number. A
+  // monotonic request id (bumped on expand / matches-change) ignores stale
+  // fetches from an older match set (e.g. a re-run that reset matches, or a
+  // different row expanded while a prior fetch was in flight).
   const lineReq = useRef(0);
   useEffect(() => {
-    if (expandedId == null || expandedFirst == null) {
-      setLineContent(null);
+    if (expandedId == null || expandedMatches.length === 0) {
+      setLineContents(new Map());
       return;
     }
     const id = ++lineReq.current;
-    getLines(expandedId, expandedFirst, 1).then((lines) => {
-      if (id !== lineReq.current) return;
-      setLineContent(lines[0] ?? "");
+    Promise.all(
+      expandedMatches.map((n) =>
+        getLines(expandedId, n, 1).then(
+          (ls) => [n, ls[0] ?? ""] as [number, string],
+        ),
+      ),
+    ).then((entries) => {
+      if (id !== lineReq.current) return; // stale: a newer expand/matches-change superseded us
+      setLineContents(new Map(entries));
     });
-  }, [expandedId, expandedFirst]);
+  }, [expandedId, expandedMatches]);
 
   // The run trigger. Fires only on an explicit runTick bump (Search click or a
   // history/nav click). Skips an overlapping scan of the EXACT same query that
@@ -627,27 +648,33 @@ export function SearchPanel({
                   <span className="path">{path}</span>
                   <span className="hc">{r.matches.length} 命中</span>
                 </div>
-                {isOpen && expandedFirst != null && r.sessionId === expandedId && (
+                {isOpen && r.sessionId === expandedId && (
                   <div className="fsub">
-                    {lineContent != null && (
-                      <div
-                        className="mln hit"
-                        role={canJump ? "button" : undefined}
-                        tabIndex={canJump ? 0 : undefined}
-                        aria-label={
-                          canJump ? `Jump to line ${expandedFirst}` : undefined
-                        }
-                        onClick={
-                          canJump ? () => onJumpToLine!(expandedFirst) : undefined
-                        }
-                      >
-                        <span className="no">{expandedFirst}</span>
-                        <span className="msg">{lineContent}</span>
-                      </div>
-                    )}
-                    {r.matches.length > 1 && (
-                      <div className="more">还有 {r.matches.length - 1} 行</div>
-                    )}
+                    {/* Issue 1: render EVERY matching line (line number + decoded
+                        content), not just matches[0] + a "还有 N 行" truncation.
+                        Content is fetched in parallel by the effect above and
+                        indexed by line number; until a line's content resolves
+                        its row still shows the line number (content streams in). */}
+                    {r.matches.map((n) => {
+                      const content = lineContents.get(n);
+                      return (
+                        <div
+                          key={n}
+                          className="mln hit"
+                          role={canJump ? "button" : undefined}
+                          tabIndex={canJump ? 0 : undefined}
+                          aria-label={
+                            canJump ? `Jump to line ${n}` : undefined
+                          }
+                          onClick={
+                            canJump ? () => onJumpToLine!(n) : undefined
+                          }
+                        >
+                          <span className="no">{n}</span>
+                          <span className="msg">{content ?? ""}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
