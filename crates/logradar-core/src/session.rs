@@ -30,6 +30,17 @@ fn is_zip(bytes: &[u8]) -> bool { bytes.len() >= 4 && bytes[0..4] == [0x50,0x4b,
 
 impl Session {
     pub fn open(path: &Path) -> io::Result<Self> {
+        // Defense in depth: a directory path reaching here (stale recent, dropped
+        // folder, legacy Open folder button) must surface a friendly error, NOT
+        // a raw OS error — Windows File::open(dir) returns EACCES ("拒绝访问
+        // (os error 5)"), macOS returns EISDIR. Guard before File::open so both
+        // platforms agree on the message.
+        if path.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LogRadar opens a single file, not a directory — pass a .log/.gz/.zip file path",
+            ));
+        }
         let file = File::open(path)?;
         let mut head = [0u8; 4];
         let n = file.take(4).read(&mut head)?; // head is up to 4 bytes
@@ -214,6 +225,25 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].contains("INFO a"));
         assert!(!lines[0].ends_with('\r'), "line 0 should not end with \\r, got: {:?}", lines[0]);
+    }
+
+    #[test]
+    fn open_directory_returns_friendly_error_not_raw_os_error() {
+        // Defense in depth: a directory path reaching Session::open (stale
+        // recent, dropped folder, legacy Open folder button) must surface a
+        // friendly "is a directory" error, NOT a raw OS error. Windows
+        // File::open(dir) → EACCES "拒绝访问 (os error 5)"; macOS → EISDIR.
+        // The is_dir() guard fires before File::open, so both platforms get
+        // the same friendly message instead of a cryptic os error.
+        let dir = std::env::temp_dir();
+        let msg = match Session::open(&dir) {
+            Ok(_) => panic!("opening a directory must error, not succeed"),
+            Err(e) => e.to_string(),
+        };
+        assert!(msg.to_lowercase().contains("directory"),
+            "should explain it's a directory, got: {msg}");
+        assert!(!msg.contains("os error"),
+            "should be a friendly error, not a raw OS error, got: {msg}");
     }
 }
 
