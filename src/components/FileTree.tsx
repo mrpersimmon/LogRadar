@@ -14,6 +14,10 @@ export type FileTreeProps = {
   sessions: Map<string, SessionMeta>;
   activeId: string | null;
   onSelect: (id: string) => void;
+  /** Optional inline style override applied to the root `<aside className=
+  *  "file-tree">`. MainWindow uses this to drive the sidebar width from its
+  *  drag-to-resize handle (Issue 3), overriding the CSS `width:208px`. */
+  style?: React.CSSProperties;
 };
 
 type FileNode = {
@@ -82,7 +86,7 @@ function finalize(node: DirNode): void {
   );
 }
 
-export function FileTree({ sessions, activeId, onSelect }: FileTreeProps) {
+export function FileTree({ sessions, activeId, onSelect, style }: FileTreeProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const root = buildTree(sessions);
 
@@ -119,7 +123,7 @@ export function FileTree({ sessions, activeId, onSelect }: FileTreeProps) {
   const label = `${root.fileCount} file${root.fileCount === 1 ? "" : "s"}`;
 
   return (
-    <aside className="file-tree" aria-label="File tree">
+    <aside className="file-tree" aria-label="File tree" style={style}>
       <div className="ft-head">
         <span className="ft-eyebrow">File tree</span>
         <span className="ft-count">{label}</span>

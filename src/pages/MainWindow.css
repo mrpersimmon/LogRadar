@@ -52,6 +52,34 @@
   max-height: 60vh;
 }
 
+/* Issue 3: drag-to-resize handles — thin flex items (flex-shrink:0 so they
+   don't collapse the layout) with a col-/row-resize cursor. The vertical handle
+   sits between FileTree and .mw-main; the horizontal one between .mw-view and
+   SearchPanel. Inline width/height on FileTree/.sp overrides the CSS defaults
+   as the user drags. */
+.mw-resize-h {
+  flex-shrink: 0;
+  background: var(--border);
+  transition: background 0.12s ease;
+  z-index: 5;
+}
+.mw-resize-h:hover {
+  background: var(--scan);
+}
+.mw-resize-v {
+  width: 4px;
+  cursor: col-resize;
+}
+.mw-resize-hz {
+  height: 4px;
+  cursor: row-resize;
+}
+@media (max-width: 720px) {
+  .mw-resize-v {
+    display: none; /* sidebar hidden on narrow viewports — no handle */
+  }
+}
+
 /* Empty state (no active session): centered radar glyph + hint. Keeps the
    chrome (tabs/sidebar/status) alive so the user sees the app is ready. */
 .mw-empty {

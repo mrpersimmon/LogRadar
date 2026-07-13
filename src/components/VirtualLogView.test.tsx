@@ -168,6 +168,34 @@ describe("VirtualLogView", () => {
     expect(onJumpToLine).toHaveBeenCalledWith(500000);
   });
 
+  it("auto-scrolls the viewport to center the jump line when jumpToLine changes (Issue 2)", async () => {
+    const { container, rerender } = render(
+      <VirtualLogView sessionId="s1" totalLines={1_000_000} rowHeight={ROW} jumpToLine={null} />,
+    );
+    const scroll = viewport(container);
+    // Make scrollTop a capturable setter + give clientHeight a real value so the
+    // centering math (jumpToLine * rowHeight - clientHeight/2) is deterministic
+    // (jsdom has no layout engine — scrollTop/clientHeight are 0 by default).
+    let captured = 0;
+    Object.defineProperty(scroll, "clientHeight", { configurable: true, value: VIEWPORT });
+    Object.defineProperty(scroll, "scrollTop", {
+      configurable: true,
+      get: () => captured,
+      set: (v: number) => {
+        captured = v;
+      },
+    });
+    await waitFor(() => expect(mockedGetLines).toHaveBeenCalled());
+
+    // jumpToLine null → 500000: the effect must set scrollTop so the jumped
+    // line is centered, not just marked off-screen.
+    rerender(
+      <VirtualLogView sessionId="s1" totalLines={1_000_000} rowHeight={ROW} jumpToLine={500000} />,
+    );
+    // 500000 * 20 - 400/2 = 10_000_000 - 200 = 9_999_800
+    await waitFor(() => expect(captured).toBe(500_000 * ROW - VIEWPORT / 2));
+  });
+
   it("requests the first window on mount (start=0)", async () => {
     render(<VirtualLogView sessionId="s1" totalLines={1_000_000} rowHeight={ROW} />);
     await waitFor(() => expect(mockedGetLines.mock.calls.length).toBeGreaterThan(0));

@@ -77,9 +77,62 @@ export function MainWindow({
   }, []);
 
   // The jump target: a VirtualLogView row click (or a SearchPanel result-row
-  // click) calls onJumpToLine(n) → we set this → VirtualLogView marks line n
-  // with the jump style. The search→view loop's jump half.
+  // double-click) calls onJumpToLine(n) → we set this → VirtualLogView marks
+  // line n with the jump style + auto-scrolls to it (Issue 2b). The
+  // search→view loop's jump half.
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+
+  // Issue 3: drag-to-resize the sidebar width + search-panel height. The handles
+  // are flex items (flex-shrink:0) slotted between FileTree↔mw-main and
+  // mw-view↔SearchPanel; the inline width/height override the CSS defaults
+  // (FileTree width:208px, .mw-main .sp height:36vh). Both use the delta-from-
+  // mousedown pattern (no getBoundingClientRect, which is 0 in jsdom).
+  const [sidebarWidth, setSidebarWidth] = useState(208); // 120..480
+  const [spHeight, setSpHeight] = useState<number>(
+    () => (typeof window !== "undefined" ? window.innerHeight : 768) * 0.36,
+  );
+  const onSidebarResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = sidebarWidth;
+      const onMove = (ev: MouseEvent) => {
+        setSidebarWidth(
+          Math.min(480, Math.max(120, startW + (ev.clientX - startX))),
+        );
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [sidebarWidth],
+  );
+  const onSpResize = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startY = e.clientY;
+      const startH = spHeight;
+      const maxH =
+        (typeof window !== "undefined" ? window.innerHeight : 768) * 0.8;
+      // panel anchored at the bottom: moving the handle up (smaller clientY)
+      // grows the panel → delta = startY - clientY.
+      const onMove = (ev: MouseEvent) => {
+        setSpHeight(
+          Math.min(maxH, Math.max(120, startH + (startY - ev.clientY))),
+        );
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    [spHeight],
+  );
 
   // Task 6 (④a): the Compare picker. Visible only when 2+ sessions are open.
   // `leftId`/`rightId` default to the first two distinct sessions when the
@@ -114,7 +167,20 @@ export function MainWindow({
       />
 
       <div className="mw-body">
-        <FileTree sessions={map} activeId={activeId} onSelect={setActive} />
+        <FileTree
+          sessions={map}
+          activeId={activeId}
+          onSelect={setActive}
+          style={{ width: sidebarWidth }}
+        />
+        <div
+          className="mw-resize-h mw-resize-v"
+          data-testid="sidebar-resize-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onMouseDown={onSidebarResize}
+        />
 
         <div className="mw-main">
           {active ? (
@@ -137,6 +203,15 @@ export function MainWindow({
                 />
               </div>
 
+              <div
+                className="mw-resize-h mw-resize-hz"
+                data-testid="sp-resize-handle"
+                role="separator"
+                aria-orientation="horizontal"
+                aria-label="Resize search panel"
+                onMouseDown={onSpResize}
+              />
+
               <SearchPanel
                 sessionId={active.sessionId}
                 filePath={active.path}
@@ -145,6 +220,7 @@ export function MainWindow({
                 search={search}
                 setActiveQuery={setActiveQuery}
                 onJumpToLine={(n: number) => setJumpTarget(n)}
+                style={{ height: spHeight }}
               />
             </>
           ) : (

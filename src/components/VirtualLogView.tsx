@@ -153,6 +153,20 @@ export function VirtualLogView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalLines, rowHeight]);
 
+  // Issue 2b: when the jump target changes, auto-scroll the viewport so the
+  // jumped line is centered (not just marked off-screen). Setting scrollTop
+  // programmatically triggers onScroll → recompute → fetches the window around
+  // the jump line (a real browser fires the scroll event on programmatic set;
+  // jsdom does not, so the contract under test is the scrollTop assignment).
+  useEffect(() => {
+    if (jumpToLine == null) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const targetTop = jumpToLine * rowHeight;
+    el.scrollTop = Math.max(0, targetTop - el.clientHeight / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jumpToLine]);
+
   useEffect(() => {
     if (win.count <= 0) return;
     const id = ++reqId.current;

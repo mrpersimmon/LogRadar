@@ -122,6 +122,10 @@ export type SearchPanelProps = {
   /** Resolves a session id → its file-path label, used to label each flat row
    *  in cross-file mode. Falls back to the session id when a path is unknown. */
   filePathFor?: (sessionId: string) => string | undefined;
+  /** Inline style override applied to the root `<section className="sp">`.
+   *  MainWindow uses this to drive the panel height from its drag-to-resize
+   *  handle (Issue 3), overriding the CSS `height:36vh`. */
+  style?: React.CSSProperties;
 };
 
 // ---------- pure logic (exported for direct unit testing) ----------
@@ -267,6 +271,33 @@ function firstText(node: QueryNodeDto): string | null {
   return null;
 }
 
+/** Escape a string for safe embedding in a RegExp — the highlight term comes
+ *  from a user keyword, so regex meta-chars must be treated as literals. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Highlight every (case-insensitive) occurrence of `term` in `text` by wrapping
+ *  it in `<mark className="hit">` (preserving the original-cased match). Mirrors
+ *  the hit highlight VirtualLogView renders via SyntaxHighlighter, but here in
+ *  the flat-results match rows so the keyword is visible in the decoded line
+ *  content too. Empty term → the text as-is (no marks). */
+function highlightText(text: string, term: string): React.ReactNode {
+  if (!term || !text) return text;
+  const re = new RegExp(`(${escapeRegExp(term)})`, "i");
+  const parts = text.split(re);
+  const lower = term.toLowerCase();
+  return parts.map((p, i) =>
+    p && p.toLowerCase() === lower ? (
+      <mark className="hit" key={i}>
+        {p}
+      </mark>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
+  );
+}
+
 export function SearchPanel({
   sessionId,
   filePath,
@@ -276,6 +307,7 @@ export function SearchPanel({
   onJumpToLine,
   sessionIds,
   filePathFor,
+  style,
 }: SearchPanelProps): React.ReactElement {
   const [form, setForm] = useState<QueryForm>(EMPTY_FORM);
   const [kwInput, setKwInput] = useState("");
@@ -316,6 +348,11 @@ export function SearchPanel({
   }, [sessionId]);
 
   const query = buildQuery(form) ?? EMPTY_QUERY;
+  // Issue 1: the keyword to highlight inside each match row's decoded content,
+  // derived from the form's query via the exported extractHighlightTerm (the
+  // first text predicate's term). Mirrors VirtualLogView's hit highlight so the
+  // results show the keyword too, not just the log view.
+  const highlightTerm = extractHighlightTerm(query);
   // The controller: App's lifted instance when `search` is provided (controlled
   // — the same matches flow to VirtualLogView), else a local useSearch
   // (standalone/test mode). The registry dedupes by (sessionId, query, cap), so
@@ -490,7 +527,7 @@ export function SearchPanel({
   const fileCount = rows.filter((r) => r.matches.length > 0).length;
 
   return (
-    <section className="sp" aria-label="Search panel">
+    <section className="sp" aria-label="Search panel" style={style}>
       <div className="panel-head">
         <span className="eyebrow">Search · 在所有文件中查找</span>
       </div>
@@ -666,12 +703,28 @@ export function SearchPanel({
                           aria-label={
                             canJump ? `Jump to line ${n}` : undefined
                           }
-                          onClick={
+                          // Issue 2a: jump on DOUBLE-click (single-click is a
+                          // no-op so it doesn't conflict with the file row's
+                          // single-click expand/collapse). Enter/Space still
+                          // jump (keyboard parity with role="button").
+                          onDoubleClick={
                             canJump ? () => onJumpToLine!(n) : undefined
+                          }
+                          onKeyDown={
+                            canJump
+                              ? (e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.preventDefault();
+                                    onJumpToLine!(n);
+                                  }
+                                }
+                              : undefined
                           }
                         >
                           <span className="no">{n}</span>
-                          <span className="msg">{content ?? ""}</span>
+                          <span className="msg">
+                            {highlightText(content ?? "", highlightTerm)}
+                          </span>
                         </div>
                       );
                     })}

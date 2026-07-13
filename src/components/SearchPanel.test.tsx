@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, act } from "@testing-library/react";
+import { render, screen, fireEvent, within, act, waitFor } from "@testing-library/react";
 import {
   SearchPanel,
   buildQuery,
@@ -526,7 +526,7 @@ describe("SearchPanel results", () => {
     expect(screen.queryByText(/还有/)).toBeNull();
   });
 
-  it("makes each rendered match row jump-clickable (calls onJumpToLine with its line number)", async () => {
+  it("jumps to a line on DOUBLE-click of a match row (Issue 2)", async () => {
     const onJumpToLine = vi.fn();
     useSearchMock.mockReturnValue(fakeCtrl({ matches: [124, 231], status: "done" }));
     getLinesMock.mockResolvedValue(["content"]);
@@ -535,10 +535,46 @@ describe("SearchPanel results", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
     await screen.findByText("124");
-    fireEvent.click(screen.getByRole("button", { name: /jump to line 124/i }));
+    // Issue 2a: match rows jump on DOUBLE-click (not single-click).
+    fireEvent.dblClick(screen.getByRole("button", { name: /jump to line 124/i }));
     expect(onJumpToLine).toHaveBeenCalledWith(124);
-    fireEvent.click(screen.getByRole("button", { name: /jump to line 231/i }));
+    fireEvent.dblClick(screen.getByRole("button", { name: /jump to line 231/i }));
     expect(onJumpToLine).toHaveBeenCalledWith(231);
+  });
+
+  it("does NOT jump on single-click of a match row (jump requires double-click) (Issue 2)", async () => {
+    const onJumpToLine = vi.fn();
+    useSearchMock.mockReturnValue(fakeCtrl({ matches: [124], status: "done" }));
+    getLinesMock.mockResolvedValue(["content"]);
+    render(<SearchPanel sessionId="s1" filePath="a.log" onJumpToLine={onJumpToLine} />);
+    fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
+    const row = await screen.findByRole("button", { name: /jump to line 124/i });
+    // single-click is a no-op now (the file row uses single-click to expand)
+    fireEvent.click(row);
+    expect(onJumpToLine).not.toHaveBeenCalled();
+  });
+
+  // Issue 1: the keyword must be highlighted (<mark class="hit">) inside each
+  // match row's decoded content — previously the content rendered as plain text
+  // and only VirtualLogView highlighted the term. The term is derived from the
+  // form's query via the exported extractHighlightTerm (first text predicate).
+  it("highlights the keyword in a match row's content with mark.hit (Issue 1)", async () => {
+    useSearchMock.mockReturnValue(fakeCtrl({ matches: [124], status: "done" }));
+    getLinesMock.mockResolvedValue([
+      "2026-07-11 14:22:01 ERROR DB connection refused",
+    ]);
+    const { container } = render(
+      <SearchPanel sessionId="s1" filePath="a.log" />,
+    );
+    // adding the keyword makes the form's query carry the "refused" text term,
+    // which extractHighlightTerm surfaces as the highlight term for the results.
+    addKeyword("refused");
+    fireEvent.click(screen.getByRole("button", { name: /a\.log/i }));
+    await waitFor(() =>
+      expect(container.querySelector(".mln mark.hit")).not.toBeNull(),
+    );
+    const mark = container.querySelector(".mln mark.hit") as HTMLElement;
+    expect(mark.textContent).toBe("refused");
   });
   it("collapses the expanded rows on a second click", async () => {
     useSearchMock.mockReturnValue(fakeCtrl({ matches: [124], status: "done" }));

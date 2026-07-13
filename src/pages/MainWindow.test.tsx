@@ -12,7 +12,7 @@
 //       to the matching relative position — the signature log-view↔minimap link.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 import type { SessionsApi, SessionMeta } from "../hooks/useSessions";
 
 // Mock the IPC module so VirtualLogView's `getLines`, SearchPanel's
@@ -91,10 +91,12 @@ beforeEach(() => {
 
 /** jsdom reports 0 for all layout metrics (no layout engine). Force
  *  `clientHeight` / `scrollTop` on the log viewport so the visible-window math
- *  is deterministic — same trick VirtualLogView's own test uses. */
+ *  is deterministic — same trick VirtualLogView's own test uses. scrollTop is
+ *  writable so VirtualLogView's jumpToLine auto-scroll effect can assign it
+ *  (Issue 2b) without throwing in strict mode. */
 function forceMetrics(el: HTMLElement, scrollTop: number, vh = 400) {
   Object.defineProperty(el, "clientHeight", { configurable: true, value: vh });
-  Object.defineProperty(el, "scrollTop", { configurable: true, value: scrollTop });
+  Object.defineProperty(el, "scrollTop", { configurable: true, writable: true, value: scrollTop });
 }
 
 describe("MainWindow", () => {
@@ -351,6 +353,85 @@ describe("MainWindow", () => {
       expect(setView).toHaveBeenCalledWith("split", {
         left: "s1",
         right: "s3",
+      });
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Issue 3: drag-to-resize handles. A vertical handle between FileTree and
+  // .mw-main resizes the sidebar width; a horizontal handle between .mw-view
+  // and SearchPanel resizes the panel height. jsdom can't do a real mouse drag,
+  // but the delta-from-mousedown pattern (no getBoundingClientRect) makes the
+  // window mousemove dispatch deterministic, so the wiring is unit-tested;
+  // visual/feel verification needs `cargo tauri dev`.
+  // -------------------------------------------------------------------------
+  describe("Resize handles (Issue 3)", () => {
+    it("renders drag-resize handles for the sidebar and search panel", async () => {
+      const sessions = new Map([["s1", meta("s1", "/logs/a.log", 1000)]]);
+      const { container } = render(<MainWindow sessions={api(sessions, "s1")} />);
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      expect(
+        container.querySelector('[data-testid="sidebar-resize-handle"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('[data-testid="sp-resize-handle"]'),
+      ).not.toBeNull();
+    });
+
+    it("applies the default sidebar width + search panel height via inline style", async () => {
+      const sessions = new Map([["s1", meta("s1", "/logs/a.log", 1000)]]);
+      const { container } = render(<MainWindow sessions={api(sessions, "s1")} />);
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      const ft = container.querySelector(".file-tree") as HTMLElement;
+      expect(ft.style.width).toBe("208px"); // default sidebar width
+      const sp = container.querySelector(".sp") as HTMLElement;
+      // default = window.innerHeight * 0.36 (jsdom innerHeight = 768 → 276.48)
+      expect(parseFloat(sp.style.height)).toBeCloseTo(
+        window.innerHeight * 0.36,
+        5,
+      );
+    });
+
+    it("dragging the sidebar handle resizes the FileTree width", async () => {
+      const sessions = new Map([["s1", meta("s1", "/logs/a.log", 1000)]]);
+      const { container } = render(<MainWindow sessions={api(sessions, "s1")} />);
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      const handle = container.querySelector(
+        '[data-testid="sidebar-resize-handle"]',
+      ) as HTMLElement;
+      // mousedown at clientX=208 (current width), then drag to clientX=300
+      fireEvent.mouseDown(handle, { clientX: 208 });
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mousemove", { clientX: 300 }));
+      });
+      const ft = container.querySelector(".file-tree") as HTMLElement;
+      expect(ft.style.width).toBe("300px");
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mouseup"));
+      });
+    });
+
+    it("dragging the search-panel handle resizes the SearchPanel height", async () => {
+      const sessions = new Map([["s1", meta("s1", "/logs/a.log", 1000)]]);
+      const { container } = render(<MainWindow sessions={api(sessions, "s1")} />);
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      const handle = container.querySelector(
+        '[data-testid="sp-resize-handle"]',
+      ) as HTMLElement;
+      const startH = window.innerHeight * 0.36;
+      fireEvent.mouseDown(handle, { clientY: 400 });
+      // drag the handle UP (clientY 400 → 300): the bottom panel grows by 100
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mousemove", { clientY: 300 }));
+      });
+      const sp = container.querySelector(".sp") as HTMLElement;
+      const expected = Math.min(
+        window.innerHeight * 0.8,
+        Math.max(120, startH + 100),
+      );
+      expect(parseFloat(sp.style.height)).toBeCloseTo(expected, 5);
+      act(() => {
+        window.dispatchEvent(new MouseEvent("mouseup"));
       });
     });
   });
