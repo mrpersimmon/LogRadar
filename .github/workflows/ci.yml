@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Node 20 (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Rust cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Frontend tests (vitest)
+        run: npm test
+
+      - name: Rust tests (workspace)
+        run: cargo test --workspace
+
+      - name: Tauri build (smoke — produces app artifact)
+        run: cargo tauri build
