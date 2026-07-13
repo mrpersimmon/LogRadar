@@ -203,6 +203,16 @@ fn extract_gz_to_file(
     Ok(())
 }
 
+/// Walk `dir`, return paths of `.log`/`.txt` files (depth-first, any depth).
+pub fn list_logs(dir: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut out = Vec::new();
+    for p in walk(dir) {
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext == "log" || ext == "txt" { out.push(p); }
+    }
+    Ok(out)
+}
+
 /// Walk `dir` and return paths of files whose magic/ext says `.zip` or `.gz`.
 fn find_nested_archives(dir: &Path) -> io::Result<Vec<PathBuf>> {
     let mut out = Vec::new();
@@ -375,6 +385,36 @@ mod tests {
         let target = extract_archive(&zip_path, |_, _, _| {}).unwrap();
         assert_eq!(target, dir.join("foo"), "must reuse existing marker dir");
         assert_eq!(std::fs::read_to_string(target.join("a.log")).unwrap(), "OLD\n", "must NOT re-extract");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn progress_callback_fires_per_file() {
+        let dir = std::env::temp_dir().join(format!("lr-ext-prog-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("foo.zip");
+        write_zip(&zip_path, &[("a.log", "x\n"), ("b.log", "y\n"), ("c.log", "z\n")]);
+        let mut seen: Vec<String> = Vec::new();
+        extract_archive(&zip_path, |_d, _t, name| seen.push(name.to_string())).unwrap();
+        assert_eq!(seen, vec!["a.log".to_string(), "b.log".to_string(), "c.log".to_string()],
+            "progress must fire once per file, in order");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn list_logs_returns_log_and_txt_files() {
+        let dir = std::env::temp_dir().join(format!("lr-ext-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.log"), "x").unwrap();
+        std::fs::write(dir.join("b.txt"), "y").unwrap();
+        std::fs::write(dir.join("c.zip"), "z").unwrap(); // not a log
+        let logs = list_logs(&dir).unwrap();
+        let names: Vec<String> = logs.iter().filter_map(|p| p.file_name().and_then(|s| s.to_str()).map(String::from)).collect();
+        assert!(names.contains(&"a.log".to_string()));
+        assert!(names.contains(&"b.txt".to_string()));
+        assert!(!names.contains(&"c.zip".to_string()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
