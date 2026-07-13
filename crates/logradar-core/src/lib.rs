@@ -1,6 +1,7 @@
 pub mod decompress;
 pub mod encoding;
 pub mod engine;
+pub mod extractor;
 pub mod format;
 pub mod line_index;
 pub mod query;
