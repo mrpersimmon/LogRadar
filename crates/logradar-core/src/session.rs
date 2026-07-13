@@ -235,4 +235,26 @@ mod compressed_tests {
         assert_eq!(s.line_count(), 2);
         assert!(s.get_lines(1, 1)[0].contains("ERROR b"));
     }
+
+    #[test]
+    fn opens_zip_with_directory_entry_indexes_file_not_dir() {
+        // Regression: a zip whose FIRST entry is a directory entry (`logs/`)
+        // must not be picked as the file to index. Pre-fix `entries.first()`
+        // returned the dir entry (0 bytes) → count_zip_lines=0 → line_count=0
+        // → search over an empty session → "无法检索". Session::open must skip
+        // directory entries and index the first FILE entry instead.
+        let p = std::env::temp_dir().join("lr-session-dir.zip");
+        let f = std::fs::File::create(&p).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::FileOptions::default();
+        zw.add_directory("logs/", opts).unwrap();
+        zw.start_file("logs/app.log", opts).unwrap();
+        writeln!(zw, "2026-07-12 14:22:01 INFO alpha").unwrap();
+        writeln!(zw, "2026-07-12 14:22:02 ERROR boom").unwrap();
+        zw.finish().unwrap();
+        let mut s = Session::open(&p).unwrap();
+        assert_eq!(s.line_count(), 2, "must index the file entry, not the directory entry");
+        assert!(s.get_lines(1, 1)[0].contains("boom"), "line 1 must be the ERROR line");
+        let _ = std::fs::remove_file(&p);
+    }
 }

@@ -91,7 +91,19 @@ impl GzView {
 pub fn zip_entries(path: &Path) -> io::Result<Vec<String>> {
     let f = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(f)?;
-    Ok((0..zip.len()).filter_map(|i| zip.by_index(i).ok().map(|z| z.name().to_string())).collect())
+    // Skip directory entries (name ends with '/', 0 bytes) — they're not
+    // indexable log files. Pre-fix, a zip whose first entry was a directory
+    // (`logs/`) had `Session::open` pick it via `entries.first()`, yielding
+    // line_count=0 and an empty search ("无法检索").
+    let mut names = Vec::with_capacity(zip.len());
+    for i in 0..zip.len() {
+        if let Ok(z) = zip.by_index(i) {
+            if !z.is_dir() {
+                names.push(z.name().to_string());
+            }
+        }
+    }
+    Ok(names)
 }
 pub fn zip_line_at(path: &Path, entry: &str, n: u64) -> Option<Vec<u8>> {
     let f = std::fs::File::open(path).ok()?;

@@ -335,4 +335,38 @@ mod stream_tests {
             "on_match must receive the GBK-decoded UTF-8 line, not raw/mangled bytes");
         let _ = std::fs::remove_file(&p);
     }
+
+    #[test]
+    fn search_stream_finds_keyword_in_zip_with_dir_entry() {
+        // End-to-end regression for the "无法检索" symptom: open a zip whose
+        // FIRST entry is a directory entry (`logs/`), then search_stream a
+        // keyword in the (file) entry's lines. Pre-fix, `zip_entries` returned
+        // the dir entry too, `entries.first()` picked it → line_count=0 →
+        // search returned 0 matches. Post-fix, the dir entry is filtered and
+        // the file entry is indexed + searched.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static C: AtomicU64 = AtomicU64::new(0);
+        let n = C.fetch_add(1, Ordering::SeqCst);
+        let p = std::env::temp_dir().join(format!("lr-stream-zip-{}-{}.zip", std::process::id(), n));
+        let _ = std::fs::remove_file(&p);
+        let f = std::fs::File::create(&p).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::FileOptions::default();
+        zw.add_directory("logs/", opts).unwrap();
+        zw.start_file("logs/app.log", opts).unwrap();
+        writeln!(zw, "INFO ok").unwrap();
+        writeln!(zw, "ERROR boom here").unwrap();
+        writeln!(zw, "WARN x").unwrap();
+        zw.finish().unwrap();
+        let mut s = Session::open(&p).unwrap();
+        assert_eq!(s.line_count(), 3, "file entry must be indexed, not the dir entry");
+        let q = Query::build(QueryNode::Leaf(Predicate::Text("boom".into()))).unwrap();
+        let tok = CancellationToken::new();
+        let fmt = s.format().clone();
+        let mut got = Vec::new();
+        let res = QueryEngine::search_stream(&mut s, &q, &fmt, &tok, usize::MAX, |n, _l| got.push(n));
+        assert_eq!(got, vec![1], "keyword in the zip file entry must be found");
+        assert_eq!(res.matched, 1);
+        let _ = std::fs::remove_file(&p);
+    }
 }
