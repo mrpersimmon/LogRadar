@@ -286,4 +286,35 @@ describe("useCrossFileSearch aggregates per-session matches", () => {
     expect(cancels).toHaveLength(2);
     expect(cancels.map((c) => (c[1] as { sessionId: string }).sessionId).sort()).toEqual(["s1", "s2"]);
   });
+
+  // I1: useCrossFileSearch maps `sessionIds` over a fixed 8-element `slots`
+  // array (the unrolled `useSearch` calls — rules-of-hooks forbid a variable
+  // loop count). With 9+ sessions, `slots[i]` (i>=8) was `undefined` →
+  // `slots[i].matches` threw a TypeError DURING render → the tree unmounted.
+  // The intent was graceful degradation ("search only the first 8"). Assert:
+  // no crash, results clamped to 8, and only the first 8 sessions are
+  // actually scanned (s9/s10 get no channel — never invoke('search')).
+  it("clamps to MAX_CROSS_SESSIONS (8) — no crash with >8 sessions, only the first 8 searched", async () => {
+    invokeMock.mockImplementation(async () => {});
+    const query = { root: { kind: "leaf", predicate: { kind: "text", text: "x" } } };
+    // 10 sessions — pre-fix this threw during render (slots[8] undefined).
+    const ids = ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"];
+
+    // renderHook itself must NOT throw (pre-fix: TypeError reading
+    // slots[8].matches). results clamped to the 8-slot cap; s9, s10 dropped.
+    const { result } = renderHook(() => useCrossFileSearch(ids, query, 100));
+    expect(result.current.results).toHaveLength(8);
+    expect(result.current.results.map((r) => r.sessionId)).toEqual(ids.slice(0, 8));
+
+    // run() fans out to the first 8 ONLY — exactly 8 channels created (s9,
+    // s10 never scanned). Pre-fix run() also sliced past slots.length.
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(allChannels()).toHaveLength(8);
+    const searchedSids = invokeMock.mock.calls
+      .filter((c) => c[0] === "search")
+      .map((c) => (c[1] as { sessionId: string }).sessionId);
+    expect(searchedSids).toEqual(ids.slice(0, 8));
+  });
 });

@@ -276,20 +276,29 @@ export function useCrossFileSearch(
   run: () => Promise<void>;
   cancel: () => void;
 } {
+  // I1: clamp to MAX_CROSS_SESSIONS. The 8 `useSearch` calls below are
+  // unrolled (rules-of-hooks forbid a variable loop count), so `slots` has a
+  // fixed length of 8. Without clamping, 9+ sessions made `sessionIds.map`
+  // read `slots[i]` (i>=8) → `undefined` → TypeError during render → tree
+  // unmounts. The intent was graceful degradation ("search only the first 8"),
+  // so clamp once at the top and map/run/cancel over `capped` only — `slots[i]`
+  // stays in bounds and tabs beyond the cap are simply not searched.
+  const capped = sessionIds.slice(0, MAX_CROSS_SESSIONS);
+
   // Fixed-slot padding (unrolled to satisfy rules-of-hooks): real sessions use
   // the real query; empty slots use the sentinel (idle forever). The registry
   // dedupes the sentinel to one entry, so the unused slots cost nothing.
-  const s0 = useSearch(sessionIds[0] ?? SENTINEL_SID, sessionIds[0] ? query : SENTINEL_QUERY, cap);
-  const s1 = useSearch(sessionIds[1] ?? SENTINEL_SID, sessionIds[1] ? query : SENTINEL_QUERY, cap);
-  const s2 = useSearch(sessionIds[2] ?? SENTINEL_SID, sessionIds[2] ? query : SENTINEL_QUERY, cap);
-  const s3 = useSearch(sessionIds[3] ?? SENTINEL_SID, sessionIds[3] ? query : SENTINEL_QUERY, cap);
-  const s4 = useSearch(sessionIds[4] ?? SENTINEL_SID, sessionIds[4] ? query : SENTINEL_QUERY, cap);
-  const s5 = useSearch(sessionIds[5] ?? SENTINEL_SID, sessionIds[5] ? query : SENTINEL_QUERY, cap);
-  const s6 = useSearch(sessionIds[6] ?? SENTINEL_SID, sessionIds[6] ? query : SENTINEL_QUERY, cap);
-  const s7 = useSearch(sessionIds[7] ?? SENTINEL_SID, sessionIds[7] ? query : SENTINEL_QUERY, cap);
+  const s0 = useSearch(capped[0] ?? SENTINEL_SID, capped[0] ? query : SENTINEL_QUERY, cap);
+  const s1 = useSearch(capped[1] ?? SENTINEL_SID, capped[1] ? query : SENTINEL_QUERY, cap);
+  const s2 = useSearch(capped[2] ?? SENTINEL_SID, capped[2] ? query : SENTINEL_QUERY, cap);
+  const s3 = useSearch(capped[3] ?? SENTINEL_SID, capped[3] ? query : SENTINEL_QUERY, cap);
+  const s4 = useSearch(capped[4] ?? SENTINEL_SID, capped[4] ? query : SENTINEL_QUERY, cap);
+  const s5 = useSearch(capped[5] ?? SENTINEL_SID, capped[5] ? query : SENTINEL_QUERY, cap);
+  const s6 = useSearch(capped[6] ?? SENTINEL_SID, capped[6] ? query : SENTINEL_QUERY, cap);
+  const s7 = useSearch(capped[7] ?? SENTINEL_SID, capped[7] ? query : SENTINEL_QUERY, cap);
   const slots = [s0, s1, s2, s3, s4, s5, s6, s7];
 
-  const results: CrossFileResult[] = sessionIds.map((sid, i) => ({
+  const results: CrossFileResult[] = capped.map((sid, i) => ({
     sessionId: sid,
     matches: slots[i].matches,
     status: slots[i].status,
@@ -299,11 +308,12 @@ export function useCrossFileSearch(
     // Fan out to every real session's controller (sentinel slots excluded).
     // `slots[i].run` is each controller's stable singleton `run`, so even
     // though `slots` is re-derived per render, the methods resolve to the same
-    // controllers the registry owns.
-    await Promise.all(slots.slice(0, sessionIds.length).map((s) => s.run()));
+    // controllers the registry owns. `capped.length` (not sessionIds.length)
+    // keeps the slice in bounds when sessionIds exceeds the 8-slot cap.
+    await Promise.all(slots.slice(0, capped.length).map((s) => s.run()));
   };
   const cancel = () => {
-    slots.slice(0, sessionIds.length).forEach((s) => s.cancel());
+    slots.slice(0, capped.length).forEach((s) => s.cancel());
   };
   return { results, run, cancel };
 }

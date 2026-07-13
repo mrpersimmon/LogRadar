@@ -160,6 +160,50 @@ describe("App", () => {
     ).toBe(true);
   });
 
+  // I2: onOpenWorkspace restored an inert query. setActiveQuery(firstQuery)
+  // re-keyed App's lifted useSearch, but (a) SearchPanel's QueryForm is private
+  // state — NOT synced to the restored activeQuery (form stays empty, Search
+  // button disabled) — and (b) no search.run() followed (the run trigger lived
+  // in SearchPanel). The restored query was armed but could never produce
+  // matches → the user landed on MainWindow with an invisible inert query.
+  // Assert: the restore path fires search.run() (the restored query actually
+  // scans + produces matches), NOT just keying useSearch.
+  it("onOpenWorkspace: the restored query actually runs (search.run fired), not just keying", async () => {
+    routerMock.view = "workspace";
+    const runSpy = vi.fn();
+    useSearchMock.mockReturnValue({
+      matches: [],
+      status: "idle",
+      run: runSpy,
+      cancel: vi.fn(),
+    });
+    const restoredQuery = {
+      root: { kind: "leaf", predicate: { kind: "text", text: "refused" } },
+    };
+    const ws: Workspace = {
+      name: "7/11 incident",
+      files: ["logs/auth/a.log"],
+      queries: [restoredQuery],
+    };
+    workspaceListMock.mockResolvedValue(["7/11 incident"]);
+    workspaceLoadMock.mockResolvedValue(ws);
+
+    render(<App />);
+    await waitFor(() =>
+      expect(screen.getByText("7/11 incident")).toBeTruthy(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^open$/i }));
+
+    // The restored query must produce matches — i.e. search.run() fires on
+    // the restore path (after the re-key render commits). Pre-fix: only
+    // keying happened (useSearch called with restoredQuery); run never fired.
+    await waitFor(() => expect(runSpy).toHaveBeenCalled());
+    // Keying happened too — the controller re-keyed onto restoredQuery.
+    expect(
+      useSearchMock.mock.calls.some((c) => c[1] === restoredQuery),
+    ).toBe(true);
+  });
+
   // Task 6 (④a): the split route. When the router's view is "split" with a
   // {left, right} selection (set by MainWindow's Compare picker), App renders
   // SplitView wired to BOTH session ids — getLines is called for each, proving

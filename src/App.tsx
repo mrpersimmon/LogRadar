@@ -17,7 +17,7 @@
 //   restore the first saved query);
 // otherwise the full WelcomePage (T10).
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { WelcomePage } from "./pages/WelcomePage";
 import { MainWindow } from "./pages/MainWindow";
@@ -51,9 +51,31 @@ export function App() {
     activeQuery ?? EMPTY_QUERY,
     SEARCH_CAP,
   );
+  // I2: a "please run the restored query after the re-key render commits"
+  // signal. `onOpenWorkspace` calls setActiveQuery(firstQuery), which re-keys
+  // `useSearch` on the NEXT render — so a run fired synchronously in the
+  // handler would target the OLD controller. The effect below runs AFTER that
+  // re-key render commits (its closure captures the re-keyed `search.run`),
+  // so the restored query actually scans + produces matches instead of arming
+  // an invisible inert query (SearchPanel's private QueryForm isn't synced to
+  // the restored activeQuery, and its run trigger lives behind the Search
+  // button — so without this, the restored query could never run).
+  const [pendingRestoreRun, setPendingRestoreRun] = useState(false);
   // The first text-predicate's keyword, surfaced to VirtualLogView so matched
   // lines wrap the term in `<mark class="hit">`. "" for level/time-only queries.
   const highlightTerm = extractHighlightTerm(activeQuery);
+
+  // I2: fire search.run() once the lifted controller has re-keyed onto the
+  // restored query. `pendingRestoreRun` is armed in onOpenWorkspace; this effect
+  // runs after the re-key render commits, so `search.run` is the restored
+  // controller's stable singleton run. Mirrors SearchPanel's runTick pattern
+  // (guard + effect, not a render-phase side effect).
+  useEffect(() => {
+    if (!pendingRestoreRun) return;
+    setPendingRestoreRun(false);
+    void search.run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingRestoreRun]);
 
   // Task 6 (④a): open a saved workspace → load each of its files into the
   // open-files registry. `useSessions.open` calls `openFile` (registering the
@@ -71,6 +93,9 @@ export function App() {
       const firstQuery = Array.isArray(ws.queries) ? ws.queries[0] : undefined;
       if (firstQuery) {
         setActiveQuery(firstQuery as SearchRequest);
+        // I2: arm the post-commit run so the restored query actually scans
+        // (see the effect above) — not just re-keys useSearch.
+        setPendingRestoreRun(true);
       }
       setView("main");
     },
