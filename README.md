@@ -46,17 +46,17 @@ npm ci
 ### Dev (hot-reload app + webview)
 
 ```bash
-cargo tauri dev
+npx tauri dev
 ```
 
 This boots the Rust app process and points the webview at the Vite dev server (`http://localhost:5173`); edits to `src/` or the Rust crates hot-reload.
 
-> The `cargo-tauri` subcommand is not bundled with the Rust toolchain. Install it once: `cargo install cargo-tauri --locked` (or `cargo binstall tauri-cli` for a prebuilt binary, which is what CI does).
+> `tauri-cli` is pinned as a dev dependency (`@tauri-apps/cli` in `package.json`) — `npm ci` installs the OS-correct prebuilt binary into `node_modules`, so no global `cargo install cargo-tauri` is needed. Call it via `npx tauri …` (or `npm run tauri …`).
 
 ### Build a release bundle (smoke)
 
 ```bash
-cargo tauri build
+npx tauri build
 ```
 
 Runs `npm run build` (`tsc && vite build`) as `beforeBuildCommand`, then compiles the Rust app in release mode and bundles a native artifact with the real LogRadar icon:
@@ -127,7 +127,7 @@ Full design rationale, the locked feature list, UI/UX direction, and the compone
 
 1. `npm ci` → `npm test` (frontend)
 2. `cargo test --workspace` (Rust, cached via `Swatinem/rust-cache`)
-3. `cargo tauri build` — release-build smoke; produces the native app artifact per OS.
+3. `npx tauri build` — release-build smoke; produces the native app artifact per OS.
 
 Linux is product-supported but deferred from the v1 CI matrix per spec §F1.
 
