@@ -55,6 +55,8 @@ function api(
     open: vi.fn(),
     close: vi.fn(),
     setActive: vi.fn(),
+    openArchive: vi.fn(),
+    openFolder: vi.fn(),
   };
 }
 

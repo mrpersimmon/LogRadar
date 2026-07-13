@@ -3,18 +3,32 @@ import { renderHook, act } from "@testing-library/react";
 import { useSessions, type SessionMeta } from "./useSessions";
 
 // Mock the IPC wrappers `useSessions` depends on (openFile / closeSession /
-// evictSearchControllers — close triggers controller eviction on the way out).
-// Re-using ③a's wrappers — no need to re-add `invoke` here.
-const { openFileMock, closeSessionMock, evictSearchControllersMock } = vi.hoisted(() => ({
+// evictSearchControllers — close triggers controller eviction on the way out;
+// extractArchive / scanDir — Task 8's archive + folder flows). Re-using ③a's
+// wrappers — no need to re-add `invoke` here. Mocks are exposed as the vi.fn
+// instances directly so tests can drive `.mockImplementation` /
+// `.mockResolvedValue` / `expect(...).toHaveBeenCalledWith` on the imported
+// wrapper name (the brief's openArchive test does this via dynamic import).
+const {
+  openFileMock,
+  closeSessionMock,
+  evictSearchControllersMock,
+  extractArchiveMock,
+  scanDirMock,
+} = vi.hoisted(() => ({
   openFileMock: vi.fn(),
   closeSessionMock: vi.fn(),
   evictSearchControllersMock: vi.fn(),
+  extractArchiveMock: vi.fn(),
+  scanDirMock: vi.fn(),
 }));
 
 vi.mock("../lib/ipc", () => ({
-  openFile: (path: string) => openFileMock(path),
-  closeSession: (id: string) => closeSessionMock(id),
-  evictSearchControllers: (id: string) => evictSearchControllersMock(id),
+  openFile: openFileMock,
+  closeSession: closeSessionMock,
+  evictSearchControllers: evictSearchControllersMock,
+  extractArchive: extractArchiveMock,
+  scanDir: scanDirMock,
 }));
 
 function meta(id: string, path: string): SessionMeta {
@@ -32,6 +46,8 @@ beforeEach(() => {
   openFileMock.mockReset();
   closeSessionMock.mockReset();
   evictSearchControllersMock.mockReset();
+  extractArchiveMock.mockReset();
+  scanDirMock.mockReset();
 });
 
 describe("useSessions open", () => {
@@ -141,5 +157,25 @@ describe("useSessions close", () => {
     expect(closeSessionMock).toHaveBeenCalledWith("sess-1");
     expect(result.current.sessions.size).toBe(1);
     expect(result.current.activeId).toBe("sess-2");
+  });
+});
+
+describe("useSessions openArchive", () => {
+  it("openArchive extracts then opens each returned log", async () => {
+    const { renderHook, act } = await import("@testing-library/react");
+    const { useSessions } = await import("./useSessions");
+    const { openFile } = await import("../lib/ipc");
+    (openFile as ReturnType<typeof vi.fn>).mockImplementation(async (path: string) => ({
+      sessionId: "s-" + path, lineCount: 1, encoding: "Utf8", isJson: false, timestampFmt: "iso",
+    }));
+    const { extractArchive } = await import("../lib/ipc");
+    (extractArchive as ReturnType<typeof vi.fn>).mockResolvedValue({
+      extractedDir: "/x", logFiles: ["/x/a.log", "/x/b.log"],
+    });
+    const { result } = renderHook(() => useSessions());
+    await act(async () => { await result.current.openArchive("/foo.zip", () => {}); });
+    expect(openFile).toHaveBeenCalledWith("/x/a.log");
+    expect(openFile).toHaveBeenCalledWith("/x/b.log");
+    expect(result.current.sessions.size).toBe(2);
   });
 });

@@ -6,7 +6,15 @@
 // single state object so `close` can delete and reassign atomically.
 
 import { useState, useCallback } from "react";
-import { openFile, closeSession, evictSearchControllers, type OpenResponse } from "../lib/ipc";
+import {
+  openFile,
+  closeSession,
+  evictSearchControllers,
+  extractArchive,
+  scanDir,
+  type OpenResponse,
+  type ExtractProgress,
+} from "../lib/ipc";
 
 export type SessionMeta = OpenResponse & {
   /** Absolute path the session was opened from. */
@@ -19,6 +27,8 @@ export type SessionsApi = {
   open: (path: string) => Promise<void>;
   close: (id: string) => Promise<void>;
   setActive: (id: string) => void;
+  openArchive: (path: string, onProgress: (p: ExtractProgress) => void) => Promise<void>;
+  openFolder: (path: string) => Promise<{ archiveHint: string[] }>;
 };
 
 type SessionsState = {
@@ -64,11 +74,43 @@ export function useSessions(): SessionsApi {
     setState((prev) => ({ ...prev, activeId: id }));
   }, []);
 
+  // Task 8: openArchive extracts an archive (streaming progress over the
+  // ExtractProgress channel) then opens each returned logFile via the hook's
+  // own `open` — so each extracted log is registered as a session + set active,
+  // exactly as if the user had opened it directly. `open` is a dep because the
+  // loop calls it; `extractArchive`/`scanDir` are module-level imports (stable)
+  // so they don't need to be listed.
+  const openArchive = useCallback(
+    async (path: string, onProgress: (p: ExtractProgress) => void) => {
+      const resp = await extractArchive(path, onProgress);
+      for (const log of resp.logFiles) {
+        await open(log);
+      }
+    },
+    [open],
+  );
+
+  // Task 8: openFolder scans a directory for logs, opens each found logFile
+  // via `open`, and returns the archiveHint (paths of archives found inside
+  // the dir that the caller may offer to extract). Mirrors openArchive's shape.
+  const openFolder = useCallback(
+    async (path: string) => {
+      const resp = await scanDir(path);
+      for (const log of resp.logFiles) {
+        await open(log);
+      }
+      return { archiveHint: resp.archiveHint };
+    },
+    [open],
+  );
+
   return {
     sessions: state.sessions,
     activeId: state.activeId,
     open,
     close,
     setActive,
+    openArchive,
+    openFolder,
   };
 }

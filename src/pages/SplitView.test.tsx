@@ -48,6 +48,8 @@ function api(sessions: Map<string, SessionMeta>): SessionsApi {
     open: vi.fn(),
     close: vi.fn(),
     setActive: vi.fn(),
+    openArchive: vi.fn(),
+    openFolder: vi.fn(),
   };
 }
 
