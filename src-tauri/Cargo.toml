@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tokio = { version = "1", features = ["sync"] }
 logradar-core = { path = "../crates/logradar-core" }
 tauri-plugin-dialog = "2"
+dirs = "5"
 
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }

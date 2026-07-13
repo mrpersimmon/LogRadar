@@ -10,16 +10,11 @@ pub struct Workspace {
 }
 
 pub fn config_dir() -> PathBuf {
-    let mut p = dirs_or_temp();
+    let mut p = dirs::config_dir().unwrap_or_else(std::env::temp_dir);
     p.push("logradar");
     p.push("workspaces");
     let _ = std::fs::create_dir_all(&p);
     p
-}
-fn dirs_or_temp() -> PathBuf {
-    // v1: use the OS config dir if available, else temp. (Avoids a dirs dep for the core shell;
-    // sub-project 4 can swap in the `dirs` crate.)
-    std::env::var_os("HOME").map(PathBuf::from).map(|h| h.join(".config")).unwrap_or_else(std::env::temp_dir)
 }
 
 /// I7: validate a workspace name before using it as a filename. Rejects path
@@ -107,6 +102,25 @@ mod tests {
         let good = unique("clean");
         save(&Workspace { name: good.clone(), files: vec!["a".into()], queries: vec![] }).unwrap();
         assert!(load(&good).is_ok());
+    }
+    // --- ④b Task 1: config_dir delegates to dirs::config_dir() (platform-correct
+    // OS config dir: ~/Library/Application Support on macOS, %APPDATA% on Windows,
+    // ~/.config on Linux), NOT the old ~/.config fallback.
+    //
+    // On macOS/Windows the fallback (~/.config) differs from dirs::config_dir(),
+    // so this assertion RED-fails against the fallback and GREEN-passes once
+    // config_dir() delegates to dirs::config_dir().
+    #[test]
+    fn config_dir_delegates_to_dirs_config_dir() {
+        let os_root = dirs::config_dir()
+            .expect("dirs::config_dir should resolve on this platform");
+        let expected = os_root.join("logradar").join("workspaces");
+        assert_eq!(
+            config_dir(),
+            expected,
+            "config_dir must derive from dirs::config_dir() (platform-correct OS \
+             config dir), not the ~/.config fallback"
+        );
     }
     #[test]
     fn load_rejects_path_traversal_names() {
