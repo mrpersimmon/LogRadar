@@ -20,6 +20,7 @@ import {
 } from "react";
 import { getLines } from "../lib/ipc";
 import { JsonInspector } from "./JsonInspector";
+import { SyntaxHighlighter } from "./SyntaxHighlighter";
 import "./VirtualLogView.css";
 
 export type LogLevel = "ERROR" | "WARN" | "INFO" | "DEBUG" | "FATAL" | "TRACE";
@@ -50,44 +51,10 @@ const OVERSCAN = 5; // extra rows above/below the viewport so fast scrolls don't
 const DEFAULT_ROW_HEIGHT = 20;
 const FALLBACK_VIEWPORT = 600; // used before layout measures (or in headless jsdom)
 
-// Best-effort parse of a raw log line into {ts, level, message}. The mockup's
-// lines look like `14:22:01.003 ERROR DB connection refused`. If the leading
-// run doesn't match a timestamp + level, the whole text is the message and no
-// pip is rendered.
-const TS_RE =
-  /^(\d{2}:\d{2}:\d{2}(?:\.\d+)?|\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)/;
-const LVL_RE = /\b(ERROR|WARN|INFO|DEBUG|FATAL|TRACE)\b/;
-
-function parseLine(raw: string): {
-  ts: string | null;
-  level: LogLevel | null;
-  message: string;
-} {
-  let rest = raw;
-  let ts: string | null = null;
-  const tsM = TS_RE.exec(rest);
-  if (tsM) {
-    ts = tsM[1];
-    rest = rest.slice(tsM[0].length).replace(/^\s+/, "");
-  }
-  let level: LogLevel | null = null;
-  let message = rest;
-  const lvlM = LVL_RE.exec(rest);
-  if (lvlM) {
-    level = lvlM[1] as LogLevel;
-    const i = lvlM.index;
-    // drop the level token (and any space right after it) from the message
-    message = (rest.slice(0, i) + rest.slice(i + lvlM[0].length)).replace(
-      /^\s+/,
-      "",
-    );
-  }
-  return { ts, level, message };
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+// Line-token parsing (timestamp / level pip / message + hit-term highlight) is
+// shared with SearchPanel/ExportDialog via `SyntaxHighlighter` — VirtualLogView
+// renders that component per row instead of reimplementing the parser, so the
+// token-coloring rules live in ONE place (SyntaxHighlighter.tsx/.css).
 
 /** Best-effort detect+extract of a JSON object/array in a raw log line, for the
  *  ▸展开JSON affordance (spec C5). Tries the whole line first (pure-JSON
@@ -110,34 +77,6 @@ function extractJson(raw: string): string | null {
     }
   }
   return null;
-}
-
-/** Split `text` on the (case-insensitive) `term` and wrap each match in
- * `<mark class="hit">`. Used only for hit lines. */
-function HighlightedMessage({
-  text,
-  term,
-}: {
-  text: string;
-  term?: string;
-}): ReactNode {
-  if (!term) return <>{text}</>;
-  const re = new RegExp(`(${escapeRegex(term)})`, "i");
-  const parts = text.split(re);
-  const tl = term.toLowerCase();
-  return (
-    <>
-      {parts.map((p, i) =>
-        p && p.toLowerCase() === tl ? (
-          <mark className="hit" key={i}>
-            {p}
-          </mark>
-        ) : (
-          <span key={i}>{p}</span>
-        ),
-      )}
-    </>
-  );
 }
 
 export function VirtualLogView({
@@ -231,7 +170,6 @@ export function VirtualLogView({
     for (let i = 0; i < chunk.lines.length; i++) {
       const n = chunk.start + i;
       const raw = chunk.lines[i];
-      const { ts, level, message } = parseLine(raw);
       const isHit = hitSet?.has(n) ?? false;
       const isJump = jumpToLine != null && jumpToLine === n;
       // ▸展开JSON affordance: only on lines whose JSON parses to an object/array.
@@ -259,20 +197,10 @@ export function VirtualLogView({
             {isJump ? "▸" : ""}
             {String(n).padStart(pad, "0")}
           </span>
-          {ts != null && <span className="ts">{ts}</span>}
-          {level != null && (
-            <span className={`lv ${level.toLowerCase()}`}>
-              <span className="pip" />
-              {level}
-            </span>
-          )}
-          <span className="msg">
-            {isHit && highlightTerm ? (
-              <HighlightedMessage text={message} term={highlightTerm} />
-            ) : (
-              message
-            )}
-          </span>
+          <SyntaxHighlighter
+            line={raw}
+            hits={isHit && highlightTerm ? [highlightTerm] : []}
+          />
           {isJump && <span className="tag">← jump target</span>}
           {isJson && (
             <span

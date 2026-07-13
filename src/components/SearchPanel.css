@@ -84,7 +84,7 @@
   display: inline-flex;
   align-items: center;
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
   border: none;
   border-radius: 6px;
   padding: 3px 10px;
@@ -163,7 +163,7 @@
 .btn-search {
   margin-left: auto;
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
   border: none;
   border-radius: 7px;
   padding: 6px 16px;

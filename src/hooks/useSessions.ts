@@ -6,7 +6,7 @@
 // single state object so `close` can delete and reassign atomically.
 
 import { useState, useCallback } from "react";
-import { openFile, closeSession, type OpenResponse } from "../lib/ipc";
+import { openFile, closeSession, evictSearchControllers, type OpenResponse } from "../lib/ipc";
 
 export type SessionMeta = OpenResponse & {
   /** Absolute path the session was opened from. */
@@ -44,6 +44,9 @@ export function useSessions(): SessionsApi {
 
   const close = useCallback(async (id: string) => {
     await closeSession(id);
+    // Evict this session's search controllers from the singleton registry so
+    // it doesn't leak across open/close cycles (their Channels are dead now).
+    evictSearchControllers(id);
     setState((prev) => {
       const sessions = new Map(prev.sessions);
       sessions.delete(id);

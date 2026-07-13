@@ -62,7 +62,7 @@
 }
 .sv-sync-toggle.on .sv-sw::after {
   left: 15px;
-  background: #06231f;
+  background: var(--on-scan);
 }
 
 .sv-align {

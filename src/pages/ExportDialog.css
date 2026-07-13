@@ -19,7 +19,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -93,7 +93,7 @@
 }
 .ed-seg-btn.on {
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
   font-weight: 600;
 }
 .ed-seg-btn:hover:not(.on) {
@@ -133,7 +133,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #06231f;
+  color: var(--on-scan);
   font-size: 10px;
   font-weight: 700;
 }
@@ -330,7 +330,7 @@
 }
 .ed-btn.ed-primary {
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
   border-color: var(--scan);
 }
 .ed-btn.ed-primary:hover:not(:disabled) {

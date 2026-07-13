@@ -119,7 +119,7 @@
 
 /* light theme: crisp line diagram, no muddy glow */
 [data-theme="light"] .wp-sweep {
-  background: radial-gradient(circle, rgba(30, 138, 124, 0.06), transparent 72%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--scan) 6%, transparent), transparent 72%);
   border-radius: 50%;
 }
 [data-theme="light"] .wp-sweep .wp-ring {
@@ -129,12 +129,12 @@
   background: conic-gradient(
     from 0deg,
     transparent 0deg,
-    rgba(30, 138, 124, 0.15) 28deg,
+    color-mix(in srgb, var(--scan) 15%, transparent) 28deg,
     transparent 60deg
   );
 }
 [data-theme="light"] .wp-sweep .wp-core {
-  box-shadow: 0 0 0 5px rgba(30, 138, 124, 0.16);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--scan) 16%, transparent);
 }
 [data-theme="light"] .wp-sweep .wp-blip {
   box-shadow: 0 0 0 1.5px var(--surface);
@@ -194,7 +194,7 @@
 }
 .wp-btn.wp-primary {
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
   border-color: var(--scan);
 }
 

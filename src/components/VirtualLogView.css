@@ -47,6 +47,16 @@
   background: var(--surface-2);
 }
 
+/* The SyntaxHighlighter (.sh-line) renders a row's ts/level/message tokens as
+   one inline-flex unit. Inside `.ln` (display:flex) it must grow to fill the
+   row the way the old `.msg` did, and `min-width:0` lets its inner `.msg`
+   ellipsis — otherwise the unit would hold its content's min-content width and
+   overflow instead of truncating. */
+.ln .sh-line {
+  flex: 1;
+  min-width: 0;
+}
+
 .ln .no {
   width: 54px;
   text-align: right;

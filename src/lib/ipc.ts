@@ -115,6 +115,23 @@ export function __resetSearchControllers(): void {
   controllerRegistry.clear();
 }
 
+/** Drop every search controller registered for `sessionId`. Called on session
+ *  close so the registry doesn't grow unbounded across open/close cycles: a
+ *  closed session's controllers (one per distinct query/cap combo — the
+ *  cross-file search pads up to MAX_CROSS_SESSIONS slots, and history re-runs
+ *  accumulate distinct query keys) are stale (their Channel is dead, the
+ *  session is gone from the backend) and must not linger. Keys are
+ *  `${sessionId}:${cap}:${json}`, so the `${sessionId}:` prefix matches every
+ *  controller for that session and ONLY that session — the colon delimiter
+ *  means one id can't be a prefix of another, and real session ids (Rust
+ *  UUIDs, no colons) can't collide with the sentinel (`""`). */
+export function evictSearchControllers(sessionId: string): void {
+  const prefix = `${sessionId}:`;
+  for (const key of [...controllerRegistry.keys()]) {
+    if (key.startsWith(prefix)) controllerRegistry.delete(key);
+  }
+}
+
 function createSearchController(
   sessionId: string,
   query: unknown,

@@ -2,16 +2,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { useSessions, type SessionMeta } from "./useSessions";
 
-// Mock the IPC wrappers `useSessions` depends on (openFile / closeSession).
+// Mock the IPC wrappers `useSessions` depends on (openFile / closeSession /
+// evictSearchControllers — close triggers controller eviction on the way out).
 // Re-using ③a's wrappers — no need to re-add `invoke` here.
-const { openFileMock, closeSessionMock } = vi.hoisted(() => ({
+const { openFileMock, closeSessionMock, evictSearchControllersMock } = vi.hoisted(() => ({
   openFileMock: vi.fn(),
   closeSessionMock: vi.fn(),
+  evictSearchControllersMock: vi.fn(),
 }));
 
 vi.mock("../lib/ipc", () => ({
   openFile: (path: string) => openFileMock(path),
   closeSession: (id: string) => closeSessionMock(id),
+  evictSearchControllers: (id: string) => evictSearchControllersMock(id),
 }));
 
 function meta(id: string, path: string): SessionMeta {
@@ -28,6 +31,7 @@ function meta(id: string, path: string): SessionMeta {
 beforeEach(() => {
   openFileMock.mockReset();
   closeSessionMock.mockReset();
+  evictSearchControllersMock.mockReset();
 });
 
 describe("useSessions open", () => {
@@ -95,6 +99,9 @@ describe("useSessions close", () => {
     });
 
     expect(closeSessionMock).toHaveBeenCalledWith("sess-2");
+    // Task 7: close evicts the closed session's search controllers so the
+    // singleton registry doesn't leak across open/close cycles.
+    expect(evictSearchControllersMock).toHaveBeenCalledWith("sess-2");
     expect(result.current.sessions.size).toBe(1);
     expect(result.current.sessions.has("sess-2")).toBe(false);
     // active reassigned to the remaining session

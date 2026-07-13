@@ -19,7 +19,7 @@
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 14px;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -95,7 +95,7 @@
   padding: 7px 14px;
   border: none;
   background: var(--scan);
-  color: #06231f;
+  color: var(--on-scan);
 }
 .wm-go:disabled {
   opacity: 0.5;
