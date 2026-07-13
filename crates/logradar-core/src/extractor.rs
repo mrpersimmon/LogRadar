@@ -8,8 +8,9 @@ const MAX_DEPTH: usize = 10;
 /// Extract a (possibly nested) archive to a sibling directory (for `.zip`) or
 /// sibling file (for `.gz` — the `.gz` suffix is stripped). Returns the
 /// extracted path. `on_progress(done, total, current_file)` is called per
-/// extracted file. Reuses a prior extract if the target carries the marker;
-/// rejects a conflict with a pre-existing user dir/file without a marker.
+/// extracted file. Reuses a prior extract if the target carries the marker; on conflict with
+/// a pre-existing user dir/file without the marker, renames to
+/// `<stem>-extracted[/-N]`.
 pub fn extract_archive(
     archive_path: &Path,
     mut on_progress: impl FnMut(u64, u64, &str),
@@ -62,7 +63,7 @@ fn resolve_target(computed: &Path) -> PathBuf {
             return candidate;
         }
     }
-    computed.to_path_buf() // fallback (will fail at create_dir_all if taken)
+    computed.to_path_buf() // saturation: all 1000 candidates taken; create_dir_all is a no-op on the existing dir
 }
 
 fn has_marker(dir: &Path) -> bool {
