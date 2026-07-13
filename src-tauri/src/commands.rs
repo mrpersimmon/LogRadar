@@ -384,6 +384,50 @@ pub async fn extract_archive(
     .map_err(|e| format!("{e}"))?
 }
 
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanDirResponse {
+    pub log_files: Vec<String>,
+    pub archive_hint: Vec<String>,
+}
+
+pub fn scan_dir_impl(path: &str) -> Result<ScanDirResponse, String> {
+    let dir = std::path::Path::new(path);
+    let logs = extractor::list_logs(dir).map_err(|e| e.to_string())?;
+    // walk for archives (reuse extractor's walk via a public helper or inline)
+    let mut hints: Vec<String> = Vec::new();
+    for p in walk_dir(dir) {
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if ext == "zip" || ext == "gz" {
+            hints.push(p.to_string_lossy().to_string());
+        }
+    }
+    Ok(ScanDirResponse {
+        log_files: logs.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+        archive_hint: hints,
+    })
+}
+
+fn walk_dir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    // mirror extractor::walk (or expose it); inline here to avoid cross-crate visibility churn
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() { stack.push(p); } else { out.push(p); }
+            }
+        }
+    }
+    out
+}
+
+#[tauri::command]
+pub async fn scan_dir(path: String) -> Result<ScanDirResponse, String> {
+    scan_dir_impl(&path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,6 +664,24 @@ mod extract_tests {
         assert!(resp.log_files.iter().any(|f| f.ends_with("a.log")));
         assert!(resp.log_files.iter().any(|f| f.ends_with("b.log")));
         assert!(!progress.is_empty(), "progress must be emitted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_dir_impl_returns_logs_and_archive_hints() {
+        let dir = std::env::temp_dir().join(format!("lr-cmd-scan-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.log"), "x").unwrap();
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        std::fs::write(dir.join("sub").join("b.txt"), "y").unwrap();
+        std::fs::write(dir.join("c.zip"), "z").unwrap();
+        let resp = scan_dir_impl(&dir.to_string_lossy()).unwrap();
+        assert!(resp.log_files.iter().any(|f| f.ends_with("a.log")));
+        assert!(resp.log_files.iter().any(|f| f.ends_with("b.txt")));
+        assert!(resp.archive_hint.iter().any(|f| f.ends_with("c.zip")),
+            "archives must be hinted, not in log_files");
+        assert!(!resp.log_files.iter().any(|f| f.ends_with("c.zip")));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

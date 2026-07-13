@@ -11,6 +11,7 @@ pub fn run() {
             commands::search, commands::cancel_search, commands::close_session,
             commands::export, commands::extract_archive,
             commands::workspace_save, commands::workspace_load, commands::workspace_list,
+            commands::scan_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
