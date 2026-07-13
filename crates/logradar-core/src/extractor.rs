@@ -14,14 +14,15 @@ pub fn extract_archive(
     archive_path: &Path,
     mut on_progress: impl FnMut(u64, u64, &str),
 ) -> io::Result<PathBuf> {
-    let target = compute_target(archive_path)?;
+    let target = resolve_target(&compute_target(archive_path)?);
     if target.exists() && has_marker(&target) {
-        return Ok(target); // reuse prior extract
+        return Ok(target); // reuse
     }
-    if target.exists() {
-        // conflict: user dir/file without marker — not handled yet
-        return Err(io::Error::new(io::ErrorKind::AlreadyExists,
-            "target exists without marker (conflict handling in a later task)"));
+    // Pre-create the target dir for `.zip` (a directory target). A `.gz` target
+    // is a file path — creating it as a dir would corrupt the extraction, so
+    // only directory targets are pre-created here.
+    if is_zip(archive_path) {
+        fs::create_dir_all(&target)?;
     }
     let mut state = ProgressState { done: 0, total: 0 };
     let res = extract_into(archive_path, &target, 0, &mut state, &mut on_progress);
@@ -44,6 +45,24 @@ fn compute_target(archive_path: &Path) -> io::Result<PathBuf> {
         .and_then(|s| s.to_str())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid archive name"))?;
     Ok(parent.join(stem))
+}
+
+/// If the computed target is free or carries our marker, use it as-is.
+/// If it's a user dir without the marker, rename to `<stem>-extracted[/-N]`.
+fn resolve_target(computed: &Path) -> PathBuf {
+    if !computed.exists() || has_marker(computed) {
+        return computed.to_path_buf();
+    }
+    let parent = computed.parent().unwrap_or(Path::new("."));
+    let stem = computed.file_name().and_then(|s| s.to_str()).unwrap_or("extracted");
+    for i in 1..=1000 {
+        let candidate = if i == 1 { parent.join(format!("{stem}-extracted")) }
+                        else { parent.join(format!("{stem}-extracted-{i}")) };
+        if !candidate.exists() || has_marker(&candidate) {
+            return candidate;
+        }
+    }
+    computed.to_path_buf() // fallback (will fail at create_dir_all if taken)
 }
 
 fn has_marker(dir: &Path) -> bool {
@@ -323,6 +342,38 @@ mod tests {
         assert!(res.is_err(), "zip-slip entry must be rejected");
         assert!(!dir.join("escape.log").exists(),
             "escape.log must NOT be created outside target");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn conflict_with_user_dir_renames_to_extracted_suffix() {
+        let dir = std::env::temp_dir().join(format!("lr-ext-conf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("foo")).unwrap(); // user's own foo/
+        std::fs::write(dir.join("foo").join("user.txt"), "mine").unwrap();
+        let zip_path = dir.join("foo.zip");
+        write_zip(&zip_path, &[("a.log", "INFO\n")]);
+        let target = extract_archive(&zip_path, |_, _, _| {}).unwrap();
+        assert_eq!(target, dir.join("foo-extracted"), "must rename on conflict");
+        assert!(target.join(".logradar-extracted").exists());
+        assert!(target.join("a.log").exists());
+        // user's dir untouched
+        assert!(dir.join("foo").join("user.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reuse_skips_extract_when_marker_present() {
+        let dir = std::env::temp_dir().join(format!("lr-ext-reuse-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("foo")).unwrap();
+        std::fs::write(dir.join("foo").join(".logradar-extracted"), "").unwrap();
+        std::fs::write(dir.join("foo").join("a.log"), "OLD\n").unwrap();
+        let zip_path = dir.join("foo.zip");
+        write_zip(&zip_path, &[("a.log", "NEW\n")]);
+        let target = extract_archive(&zip_path, |_, _, _| {}).unwrap();
+        assert_eq!(target, dir.join("foo"), "must reuse existing marker dir");
+        assert_eq!(std::fs::read_to_string(target.join("a.log")).unwrap(), "OLD\n", "must NOT re-extract");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
