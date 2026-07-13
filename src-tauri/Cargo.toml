@@ -20,3 +20,4 @@ dirs = "5"
 [dev-dependencies]
 tauri = { version = "2", features = ["test"] }
 flate2 = "1"
+zip = "0.6"

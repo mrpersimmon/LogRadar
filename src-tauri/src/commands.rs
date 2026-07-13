@@ -334,6 +334,56 @@ pub async fn export(
     .map_err(|e| format!("{e}"))?
 }
 
+use logradar_core::extractor;
+
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum ExtractProgress {
+    File { done: u64, total: u64, current_file: String },
+    Done { extracted_dir: String, log_count: u64 },
+}
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtractResponse {
+    pub extracted_dir: String,
+    pub log_files: Vec<String>,
+}
+
+/// Testable core of the command — runs the extract synchronously, calling
+/// `on_progress` per `ExtractProgress::File`. The Tauri command wraps this
+/// with a real Channel + spawn_blocking.
+pub fn extract_archive_impl(
+    path: &str,
+    mut on_progress: impl FnMut(ExtractProgress),
+) -> Result<ExtractResponse, String> {
+    let archive = std::path::Path::new(path);
+    let extracted = extractor::extract_archive(archive, |done, total, name| {
+        on_progress(ExtractProgress::File { done, total, current_file: name.to_string() });
+    }).map_err(|e| e.to_string())?;
+    let logs = extractor::list_logs(&extracted).map_err(|e| e.to_string())?;
+    on_progress(ExtractProgress::Done {
+        extracted_dir: extracted.to_string_lossy().to_string(),
+        log_count: logs.len() as u64,
+    });
+    Ok(ExtractResponse {
+        extracted_dir: extracted.to_string_lossy().to_string(),
+        log_files: logs.iter().map(|p| p.to_string_lossy().to_string()).collect(),
+    })
+}
+
+#[tauri::command]
+pub async fn extract_archive(
+    path: String,
+    on_event: tauri::ipc::Channel<ExtractProgress>,
+) -> Result<ExtractResponse, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        extract_archive_impl(&path, |ev| { let _ = on_event.send(ev); })
+    })
+    .await
+    .map_err(|e| format!("{e}"))?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,5 +592,34 @@ mod export_tests {
         let res = export_impl(&entry, &q, &fmt, &["msg".to_string()], "/dev/full");
         assert!(res.is_err(),
             "ENOSPC mid-write must surface as Err (pre-fix `let _ = writeln!` dropped it → Ok)");
+    }
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::*;
+    use crate::state::AppState;
+    use std::io::Write;
+    fn write_zip(path: &std::path::Path, entries: &[(&str, &str)]) {
+        let f = std::fs::File::create(path).unwrap();
+        let mut zw = zip::ZipWriter::new(f);
+        let opts = zip::write::FileOptions::default();
+        for (n, c) in entries { zw.start_file(*n, opts).unwrap(); zw.write_all(c.as_bytes()).unwrap(); }
+        zw.finish().unwrap();
+    }
+    #[test]
+    fn extract_archive_impl_streams_progress_and_returns_logs() {
+        let dir = std::env::temp_dir().join(format!("lr-cmd-ext-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let zp = dir.join("foo.zip");
+        write_zip(&zp, &[("a.log", "INFO a\nERROR boom\n"), ("b.log", "WARN x\n")]);
+        let mut progress: Vec<ExtractProgress> = Vec::new();
+        let resp = extract_archive_impl(&zp.to_string_lossy(), |p| progress.push(p)).unwrap();
+        assert_eq!(resp.extracted_dir, zp.with_file_name("foo").to_string_lossy().to_string());
+        assert!(resp.log_files.iter().any(|f| f.ends_with("a.log")));
+        assert!(resp.log_files.iter().any(|f| f.ends_with("b.log")));
+        assert!(!progress.is_empty(), "progress must be emitted");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

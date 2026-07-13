@@ -9,7 +9,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::ping, commands::open_file, commands::get_lines,
             commands::search, commands::cancel_search, commands::close_session,
-            commands::export,
+            commands::export, commands::extract_archive,
             commands::workspace_save, commands::workspace_load, commands::workspace_list,
         ])
         .run(tauri::generate_context!())

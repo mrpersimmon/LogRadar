@@ -2003,6 +2003,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tokio",
  "uuid",
+ "zip",
 ]
 
 [[package]]
