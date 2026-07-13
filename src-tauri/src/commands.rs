@@ -340,7 +340,6 @@ use logradar_core::extractor;
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ExtractProgress {
     File { done: u64, total: u64, current_file: String },
-    Done { extracted_dir: String, log_count: u64 },
 }
 
 #[derive(serde::Serialize, Debug)]
@@ -362,10 +361,11 @@ pub fn extract_archive_impl(
         on_progress(ExtractProgress::File { done, total, current_file: name.to_string() });
     }).map_err(|e| e.to_string())?;
     let logs = extractor::list_logs(&extracted).map_err(|e| e.to_string())?;
-    on_progress(ExtractProgress::Done {
-        extracted_dir: extracted.to_string_lossy().to_string(),
-        log_count: logs.len() as u64,
-    });
+    // M3: the prior `ExtractProgress::Done` emission was dead wire — the
+    // frontend's `onOpenArchive` callback only handles `type === "file"` and
+    // uses the command's return value (`logFiles`) for the final list, so
+    // `Done` was emitted then ignored. Dropped here + from the enum above;
+    // the ExtractResponse return carries the terminal state instead.
     Ok(ExtractResponse {
         extracted_dir: extracted.to_string_lossy().to_string(),
         log_files: logs.iter().map(|p| p.to_string_lossy().to_string()).collect(),
@@ -393,39 +393,42 @@ pub struct ScanDirResponse {
 
 pub fn scan_dir_impl(path: &str) -> Result<ScanDirResponse, String> {
     let dir = std::path::Path::new(path);
-    let logs = extractor::list_logs(dir).map_err(|e| e.to_string())?;
-    // walk for archives (reuse extractor's walk via a public helper or inline)
+    // I2 bonus: one walk, not two. The prior approach called
+    // `extractor::list_logs` (walk + filter .log/.txt) AND `walk_dir` (a second
+    // full walk + filter .zip/.gz) on the same tree. Classify each file in a
+    // single DFS so the tree is read once.
+    let mut logs: Vec<String> = Vec::new();
     let mut hints: Vec<String> = Vec::new();
-    for p in walk_dir(dir) {
-        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-        if ext == "zip" || ext == "gz" {
-            hints.push(p.to_string_lossy().to_string());
-        }
-    }
-    Ok(ScanDirResponse {
-        log_files: logs.iter().map(|p| p.to_string_lossy().to_string()).collect(),
-        archive_hint: hints,
-    })
-}
-
-fn walk_dir(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
-    // mirror extractor::walk (or expose it); inline here to avoid cross-crate visibility churn
-    let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         if let Ok(rd) = std::fs::read_dir(&d) {
             for e in rd.flatten() {
                 let p = e.path();
-                if p.is_dir() { stack.push(p); } else { out.push(p); }
+                if p.is_dir() {
+                    stack.push(p);
+                } else {
+                    let ext = p.extension().and_then(|x| x.to_str()).unwrap_or("");
+                    if ext == "log" || ext == "txt" {
+                        logs.push(p.to_string_lossy().to_string());
+                    } else if ext == "zip" || ext == "gz" {
+                        hints.push(p.to_string_lossy().to_string());
+                    }
+                }
             }
         }
     }
-    out
+    Ok(ScanDirResponse { log_files: logs, archive_hint: hints })
 }
 
 #[tauri::command]
 pub async fn scan_dir(path: String) -> Result<ScanDirResponse, String> {
-    scan_dir_impl(&path)
+    // I2: scan_dir_impl is synchronous blocking I/O (two recursive dir walks).
+    // Running it on the async runtime's poll thread freezes the UI; hand it to
+    // spawn_blocking (mirrors extract_archive) so the IPC task returns promptly
+    // and the actual walk runs on a blocking-capable worker.
+    tauri::async_runtime::spawn_blocking(move || scan_dir_impl(&path))
+        .await
+        .map_err(|e| format!("{e}"))?
 }
 
 #[cfg(test)]
@@ -642,7 +645,6 @@ mod export_tests {
 #[cfg(test)]
 mod extract_tests {
     use super::*;
-    use crate::state::AppState;
     use std::io::Write;
     fn write_zip(path: &std::path::Path, entries: &[(&str, &str)]) {
         let f = std::fs::File::create(path).unwrap();

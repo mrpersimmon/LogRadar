@@ -161,10 +161,11 @@ export function WelcomePage({
   };
 
   // Task 9: Open archive — single pick filtered to .zip/.gz; `extract_archive`
-  // streams `ExtractProgress` events (type "file" carries done/total/currentFile;
-  // type "done" closes out) so the ExtractProgress widget advances bar + label
-  // live. On completion each extracted log is opened (by `openArchive` itself)
-  // and the view flips to main.
+  // streams `ExtractProgress` `file` events (done/total/currentFile) so the
+  // ExtractProgress widget advances bar + label live. The command's return
+  // value (`ExtractResponse.logFiles`) carries the terminal list; the callback
+  // only needs to track `file` events. On completion each extracted log is
+  // opened (by `openArchive` itself) and the view flips to main.
   const onOpenArchive = async () => {
     setErr(null);
     try {

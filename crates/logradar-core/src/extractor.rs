@@ -15,7 +15,7 @@ pub fn extract_archive(
     archive_path: &Path,
     mut on_progress: impl FnMut(u64, u64, &str),
 ) -> io::Result<PathBuf> {
-    let target = resolve_target(&compute_target(archive_path)?);
+    let target = resolve_target(archive_path, &compute_target(archive_path)?)?;
     if target.exists() && has_marker(&target) {
         return Ok(target); // reuse
     }
@@ -28,7 +28,9 @@ pub fn extract_archive(
     let mut state = ProgressState { done: 0, total: 0 };
     let res = extract_into(archive_path, &target, 0, &mut state, &mut on_progress);
     if let Err(e) = res {
-        let _ = fs::remove_dir_all(&target); // cleanup partial on any error
+        // M2: `remove_dir_all` is a no-op on a file target (`.gz` → `a.log`),
+        // so a `.gz` partial would survive cleanup without the is_file branch.
+        remove_target(&target);
         return Err(e);
     }
     // Marker only on directory targets (i.e. `.zip`); a `.gz` produces a
@@ -50,9 +52,13 @@ fn compute_target(archive_path: &Path) -> io::Result<PathBuf> {
 
 /// If the computed target is free or carries our marker, use it as-is.
 /// If it's a user dir without the marker, rename to `<stem>-extracted[/-N]`.
-fn resolve_target(computed: &Path) -> PathBuf {
+/// Errors on exhaustion: if all 1000 `<stem>-extracted[-N]` candidates are
+/// taken without markers, returning the original `computed` would clobber the
+/// user's dir (it exists, no marker → `extract_into` writes into it + claims it
+/// with a marker). Per spec, surface an `Err` instead.
+fn resolve_target(archive: &Path, computed: &Path) -> io::Result<PathBuf> {
     if !computed.exists() || has_marker(computed) {
-        return computed.to_path_buf();
+        return Ok(computed.to_path_buf());
     }
     let parent = computed.parent().unwrap_or(Path::new("."));
     let stem = computed.file_name().and_then(|s| s.to_str()).unwrap_or("extracted");
@@ -60,10 +66,24 @@ fn resolve_target(computed: &Path) -> PathBuf {
         let candidate = if i == 1 { parent.join(format!("{stem}-extracted")) }
                         else { parent.join(format!("{stem}-extracted-{i}")) };
         if !candidate.exists() || has_marker(&candidate) {
-            return candidate;
+            return Ok(candidate);
         }
     }
-    computed.to_path_buf() // saturation: all 1000 candidates taken; create_dir_all is a no-op on the existing dir
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("could not find a free extract directory for {}", archive.display()),
+    ))
+}
+
+/// Remove `target` whether it's a file (`.gz` output) or a directory (`.zip`
+/// output). `remove_dir_all` is a no-op on a file target, so a `.gz` partial
+/// (`a.log`) would survive the cleanup without this branch.
+fn remove_target(p: &Path) {
+    if p.is_file() {
+        let _ = fs::remove_file(p);
+    } else {
+        let _ = fs::remove_dir_all(p);
+    }
 }
 
 fn has_marker(dir: &Path) -> bool {
@@ -94,7 +114,13 @@ fn extract_into(
             let n_target = compute_target(&n)?;
             // nested target is sibling to n (inside target) — ensure parent exists
             if let Some(p) = n_target.parent() { fs::create_dir_all(p)?; }
-            extract_into(&n, &n_target, depth + 1, state, on_progress)?;
+            // M2: a failed nested extraction leaves a partial n_target inside the
+            // top-level target; extract_archive's cleanup only removes the
+            // top-level target, so clean the nested target here before propagating.
+            if let Err(e) = extract_into(&n, &n_target, depth + 1, state, on_progress) {
+                remove_target(&n_target);
+                return Err(e);
+            }
         }
     } else if is_gz(archive) {
         // target is the output file path (e.g. a.log)
@@ -103,7 +129,10 @@ fn extract_into(
         if is_archive(target) {
             let n_target = compute_target(target)?;
             if let Some(p) = n_target.parent() { fs::create_dir_all(p)?; }
-            extract_into(target, &n_target, depth + 1, state, on_progress)?;
+            if let Err(e) = extract_into(target, &n_target, depth + 1, state, on_progress) {
+                remove_target(&n_target);
+                return Err(e);
+            }
         }
     } else {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "not a .zip or .gz archive"));
@@ -337,6 +366,9 @@ mod tests {
         assert!(res.is_err(), "depth 11 must error");
         let msg = res.unwrap_err().to_string();
         assert!(msg.contains("too deep") || msg.contains("depth"), "err must mention depth, got: {msg}");
+        // M1: the partial extract target (`deep/`) must be cleaned up on the
+        // depth error, not left behind as a half-extracted orphan.
+        assert!(!dir.join("deep").exists(), "partial extract target must be cleaned up on depth error");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -370,6 +402,40 @@ mod tests {
         assert!(target.join("a.log").exists());
         // user's dir untouched
         assert!(dir.join("foo").join("user.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // I1: when ALL 1000 `<stem>-extracted[-N]` candidates are taken without
+    // markers, `resolve_target` must NOT fall back to the original user dir
+    // (which exists, no marker → `extract_into` would write into it + claim it
+    // with a marker, clobbering the user's files). It must return an `Err`
+    // instead, and the user's dir must be left untouched (no marker written,
+    // user files intact).
+    #[test]
+    fn resolve_target_saturation_errors_without_clobbering_user_dir() {
+        let dir = std::env::temp_dir().join(format!("lr-ext-sat-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // user's own foo/ with a file inside — must survive the failed extract
+        std::fs::create_dir_all(dir.join("foo")).unwrap();
+        std::fs::write(dir.join("foo").join("user.txt"), "mine").unwrap();
+        // pre-create all 1000 candidates: foo-extracted, foo-extracted-2 .. foo-extracted-1000
+        for i in 1..=1000 {
+            let name = if i == 1 { "foo-extracted".to_string() }
+                        else { format!("foo-extracted-{i}") };
+            std::fs::create_dir_all(dir.join(name)).unwrap();
+        }
+        let zip_path = dir.join("foo.zip");
+        write_zip(&zip_path, &[("a.log", "INFO\n")]);
+        let res = extract_archive(&zip_path, |_, _, _| {});
+        assert!(res.is_err(), "saturation must Err, not fall back to the user's dir");
+        let msg = res.unwrap_err().to_string();
+        assert!(msg.contains("could not find a free extract directory"),
+            "err must explain exhaustion, got: {msg}");
+        // user's dir untouched: file intact + no marker written into it
+        assert!(dir.join("foo").join("user.txt").exists(), "user file must be intact");
+        assert!(!dir.join("foo").join(".logradar-extracted").exists(),
+            "no marker must be written into the user's dir");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

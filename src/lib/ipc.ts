@@ -328,14 +328,23 @@ export function useCrossFileSearch(
 // Wire shape mirrors the Rust DTOs in src-tauri/src/commands.rs (verified):
 //   ExtractProgress  #[serde(tag = "type", rename_all = "camelCase")]
 //     File { done, total, current_file } → { type: "file", done, total, currentFile }
-//     Done { extracted_dir, log_count }   → { type: "done", extractedDir, logCount }
 //   ExtractResponse { extracted_dir, log_files } → { extractedDir, logFiles }
 //   ScanDirResponse { log_files, archive_hint }   → { logFiles, archiveHint }
+//
+// M3: the Rust enum previously had a `Done { extracted_dir, log_count }`
+// variant, but the frontend's `onOpenArchive` callback only handles `type ===
+// "file"` (it uses the command's return value `logFiles` for the final list),
+// so `Done` was dead wire — emitted then ignored. It's dropped from the Rust
+// enum + its emission; the TS union reflects just the `file` shape, and the
+// terminal state travels in the `ExtractResponse` return value instead.
 // ---------------------------------------------------------------------------
 
-export type ExtractProgress =
-  | { type: "file"; done: number; total: number; currentFile: string }
-  | { type: "done"; extractedDir: string; logCount: number };
+export type ExtractProgress = {
+  type: "file";
+  done: number;
+  total: number;
+  currentFile: string;
+};
 
 export type ExtractResponse = { extractedDir: string; logFiles: string[] };
 export type ScanDirResponse = { logFiles: string[]; archiveHint: string[] };

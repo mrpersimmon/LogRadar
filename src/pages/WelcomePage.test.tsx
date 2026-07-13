@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { WelcomePage } from "./WelcomePage";
 import { useSessions } from "../hooks/useSessions";
+import type { SessionsApi, SessionMeta } from "../hooks/useSessions";
 import type { View } from "../router";
 
 const openFileMock = vi.fn();
@@ -61,19 +62,31 @@ function Harness({
   );
 }
 
+/** Build a complete `SessionsApi` stub with every member (incl. `openArchive` /
+ *  `openFolder`) backed by `vi.fn()`, mirroring the helper used in
+ *  MainWindow/SplitView tests. Replaces the prior `as never` cast that omitted
+ *  `openArchive`/`openFolder` — a stubbed-but-complete mock keeps the type
+ *  honest and won't crash if a future test triggers those paths. */
+function api(
+  sessions: Map<string, SessionMeta>,
+  activeId: string | null,
+): SessionsApi {
+  return {
+    sessions,
+    activeId,
+    open: vi.fn(),
+    close: vi.fn(),
+    setActive: vi.fn(),
+    openArchive: vi.fn(),
+    openFolder: vi.fn(),
+  };
+}
+
 describe("WelcomePage", () => {
   it("shows the drop zone, radar-sweep element, format badges, recents + workspace cards", () => {
     render(
       <WelcomePage
-        sessions={
-          {
-            sessions: new Map(),
-            activeId: null,
-            open: vi.fn(),
-            close: vi.fn(),
-            setActive: vi.fn(),
-          } as never
-        }
+        sessions={api(new Map(), null)}
         setView={vi.fn()}
         recents={[
           {
@@ -206,15 +219,7 @@ describe("WelcomePage", () => {
   it("shows Open archive and Open folder buttons", () => {
     render(
       <WelcomePage
-        sessions={
-          {
-            sessions: new Map(),
-            activeId: null,
-            open: vi.fn(),
-            close: vi.fn(),
-            setActive: vi.fn(),
-          } as never
-        }
+        sessions={api(new Map(), null)}
         setView={vi.fn()}
       />,
     );
