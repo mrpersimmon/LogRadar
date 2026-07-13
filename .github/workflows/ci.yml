@@ -36,5 +36,14 @@ jobs:
       - name: Rust tests (workspace)
         run: cargo test --workspace
 
+      # dtolnay/rust-toolchain@stable gives us `cargo` but not the `cargo-tauri`
+      # subcommand. `cargo install tauri-cli` compiles the whole Tauri bundler
+      # (~5 min); cargo-binstall fetches a prebuilt tauri-cli binary instead.
+      # We compile the small `cargo-binstall` bootstrapper, then `binstall tauri-cli`.
+      - name: Install tauri-cli (prebuilt via cargo-binstall)
+        run: |
+          cargo install cargo-binstall --locked --no-confirm
+          cargo binstall tauri-cli --version "^2" --no-confirm
+
       - name: Tauri build (smoke — produces app artifact)
         run: cargo tauri build
