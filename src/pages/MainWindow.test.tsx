@@ -250,4 +250,108 @@ describe("MainWindow", () => {
     ) as HTMLElement;
     expect(rowAfter.classList.contains("jump")).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Task 6 (④a): the Compare picker. MainWindow shows a "Compare" affordance
+  // only when 2+ sessions are open; opening it reveals a Left/Right session
+  // picker (defaulting to the first two distinct sessions); confirming calls
+  // `setView("split", { left, right })` so App routes to SplitView with both.
+  // -------------------------------------------------------------------------
+  describe("Compare picker (Task 6)", () => {
+    it("shows the Compare affordance only when 2+ sessions are open", async () => {
+      const setView = vi.fn();
+      // 1 session → no Compare button
+      const one = new Map([["s1", meta("s1", "/a.log", 10)]]);
+      const { container, rerender } = render(
+        <MainWindow sessions={api(one, "s1")} setView={setView} />,
+      );
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      expect(
+        container.querySelector('[data-testid="mw-compare-btn"]'),
+      ).toBeNull();
+
+      // 2 sessions → Compare button appears
+      const two = new Map([
+        ["s1", meta("s1", "/a.log", 10)],
+        ["s2", meta("s2", "/b.log", 20)],
+      ]);
+      rerender(<MainWindow sessions={api(two, "s1")} setView={setView} />);
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+      expect(
+        container.querySelector('[data-testid="mw-compare-btn"]'),
+      ).not.toBeNull();
+    });
+
+    it("Compare picker picks 2 sessions → setView('split', { left, right })", async () => {
+      const sessions = new Map([
+        ["s1", meta("s1", "/logs/a.log", 10)],
+        ["s2", meta("s2", "/logs/b.log", 20)],
+      ]);
+      const setView = vi.fn();
+      const { container } = render(
+        <MainWindow sessions={api(sessions, "s1")} setView={setView} />,
+      );
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+
+      // open the picker
+      fireEvent.click(
+        container.querySelector('[data-testid="mw-compare-btn"]')!,
+      );
+      const panel = container.querySelector(
+        '[data-testid="mw-compare-panel"]',
+      );
+      expect(panel).not.toBeNull();
+
+      // defaults: left=s1, right=s2 (the first two distinct sessions)
+      const leftSel = container.querySelector(
+        '[aria-label="Left session for compare"]',
+      ) as HTMLSelectElement;
+      const rightSel = container.querySelector(
+        '[aria-label="Right session for compare"]',
+      ) as HTMLSelectElement;
+      expect(leftSel.value).toBe("s1");
+      expect(rightSel.value).toBe("s2");
+
+      // confirm → routes to split with both session ids
+      fireEvent.click(
+        container.querySelector('[aria-label="Start split compare"]')!,
+      );
+      expect(setView).toHaveBeenCalledTimes(1);
+      expect(setView).toHaveBeenCalledWith("split", {
+        left: "s1",
+        right: "s2",
+      });
+    });
+
+    it("reflects a user-picked left/right pair into the setView payload", async () => {
+      const sessions = new Map([
+        ["s1", meta("s1", "/logs/a.log", 10)],
+        ["s2", meta("s2", "/logs/b.log", 20)],
+        ["s3", meta("s3", "/logs/c.log", 30)],
+      ]);
+      const setView = vi.fn();
+      const { container } = render(
+        <MainWindow sessions={api(sessions, "s1")} setView={setView} />,
+      );
+      await waitFor(() => expect(getLinesMock).toHaveBeenCalled());
+
+      fireEvent.click(
+        container.querySelector('[data-testid="mw-compare-btn"]')!,
+      );
+      // swap the right pane to the third session
+      fireEvent.change(
+        container.querySelector(
+          '[aria-label="Right session for compare"]',
+        ) as HTMLSelectElement,
+        { target: { value: "s3" } },
+      );
+      fireEvent.click(
+        container.querySelector('[aria-label="Start split compare"]')!,
+      );
+      expect(setView).toHaveBeenCalledWith("split", {
+        left: "s1",
+        right: "s3",
+      });
+    });
+  });
 });

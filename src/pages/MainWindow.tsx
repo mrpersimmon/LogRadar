@@ -15,8 +15,9 @@
 //
 // Premium tokens throughout (③a's `src/theme/tokens.css`); no hardcoded colors.
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import type { SessionsApi } from "../hooks/useSessions";
+import type { View, SplitSelection } from "../router";
 import { TabStrip } from "../components/TabStrip";
 import { FileTree } from "../components/FileTree";
 import { VirtualLogView } from "../components/VirtualLogView";
@@ -40,6 +41,10 @@ export type MainWindowProps = {
   /** The keyword to highlight inside matched lines (derived by App from the
    *  active query via `extractHighlightTerm`). Forwarded to VirtualLogView. */
   highlightTerm?: string;
+  /** View router setter (Task 6 ④a). The Compare picker calls
+   *  `setView("split", { left, right })` so App routes to SplitView with both
+   *  chosen sessions side-by-side. */
+  setView?: (v: View, split?: SplitSelection) => void;
 };
 
 function basename(path: string): string {
@@ -52,6 +57,7 @@ export function MainWindow({
   search,
   setActiveQuery,
   highlightTerm,
+  setView,
 }: MainWindowProps) {
   // Destructure the registry; `map` is the sessions Map (prop field `sessions`).
   const { sessions: map, activeId, setActive, close } = sessions;
@@ -74,6 +80,29 @@ export function MainWindow({
   // click) calls onJumpToLine(n) → we set this → VirtualLogView marks line n
   // with the jump style. The search→view loop's jump half.
   const [jumpTarget, setJumpTarget] = useState<number | null>(null);
+
+  // Task 6 (④a): the Compare picker. Visible only when 2+ sessions are open.
+  // `leftId`/`rightId` default to the first two distinct sessions when the
+  // picker opens; the user can swap either via the selects, and confirming
+  // routes to SplitView with both ids (`setView("split", { left, right })`).
+  const sessionIds = useMemo(() => [...map.keys()], [map]);
+  const canCompare = sessionIds.length >= 2;
+  const [comparing, setComparing] = useState(false);
+  const [leftId, setLeftId] = useState("");
+  const [rightId, setRightId] = useState("");
+  const toggleCompare = useCallback(() => {
+    setComparing((open) => {
+      if (open) return false;
+      // opening: default to the first two distinct open sessions
+      setLeftId(sessionIds[0] ?? "");
+      setRightId(sessionIds[1] ?? sessionIds[0] ?? "");
+      return true;
+    });
+  }, [sessionIds]);
+  const startCompare = useCallback(() => {
+    if (!setView || !leftId || !rightId || leftId === rightId) return;
+    setView("split", { left: leftId, right: rightId });
+  }, [setView, leftId, rightId]);
 
   return (
     <div className="mw">
@@ -132,6 +161,53 @@ export function MainWindow({
         </div>
       </div>
 
+      {/* Task 6 (④a): the Compare picker. Two labeled selects (Left / Right)
+          over the open sessions + a Start-compare confirm. Defaults to the
+          first two distinct sessions; the confirm routes to SplitView. */}
+      {comparing && canCompare && (
+        <div className="mw-compare" data-testid="mw-compare-panel">
+          <label className="mw-compare-field">
+            <span className="mw-compare-lbl">Left</span>
+            <select
+              aria-label="Left session for compare"
+              value={leftId}
+              onChange={(e) => setLeftId(e.target.value)}
+            >
+              {sessionIds.map((id) => (
+                <option key={id} value={id}>
+                  {basename(map.get(id)?.path ?? id)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="mw-compare-vs" aria-hidden>
+            ⇄
+          </span>
+          <label className="mw-compare-field">
+            <span className="mw-compare-lbl">Right</span>
+            <select
+              aria-label="Right session for compare"
+              value={rightId}
+              onChange={(e) => setRightId(e.target.value)}
+            >
+              {sessionIds.map((id) => (
+                <option key={id} value={id}>
+                  {basename(map.get(id)?.path ?? id)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button
+            className="mw-compare-go"
+            aria-label="Start split compare"
+            onClick={startCompare}
+            disabled={!leftId || !rightId || leftId === rightId}
+          >
+            Compare
+          </button>
+        </div>
+      )}
+
       <footer className="mw-status">
         <span className="mw-status-files">
           {map.size} file{map.size === 1 ? "" : "s"}
@@ -150,6 +226,17 @@ export function MainWindow({
               {String(viewport.start).padStart(6, "0")}
             </span>
           </>
+        )}
+        {canCompare && (
+          <button
+            className="mw-compare-btn"
+            data-testid="mw-compare-btn"
+            aria-label="Compare sessions"
+            aria-expanded={comparing}
+            onClick={toggleCompare}
+          >
+            Compare
+          </button>
         )}
       </footer>
     </div>

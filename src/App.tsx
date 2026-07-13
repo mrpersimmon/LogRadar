@@ -9,19 +9,25 @@
 // (sessionId, query, cap), so sharing one instance never double-scans.
 // Renders the active page inside AppShell (③a's topbar + theme toggle).
 // view === "main" → MainWindow (T7, now wired with the lifted search);
+// "split" → SplitView (T8; Task 6 ④a routes here from MainWindow's Compare
+//   picker, passing the {left, right} session ids stashed in the router);
 // "export" → ExportDialog (T10, now receives the lifted activeQuery);
-// "workspace" → WorkspaceManager (T10, now saves the lifted activeQuery);
+// "workspace" → WorkspaceManager (T10, now saves the lifted activeQuery +
+//   fires onOpenWorkspace, which App implements to open each file +
+//   restore the first saved query);
 // otherwise the full WelcomePage (T10).
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { AppShell } from "./components/AppShell";
 import { WelcomePage } from "./pages/WelcomePage";
 import { MainWindow } from "./pages/MainWindow";
+import { SplitView } from "./pages/SplitView";
 import { ExportDialog } from "./pages/ExportDialog";
 import { WorkspaceManager } from "./pages/WorkspaceManager";
 import { useView } from "./router";
 import { useSessions } from "./hooks/useSessions";
-import { useSearch } from "./lib/ipc";
+import { useSearch, type Workspace } from "./lib/ipc";
+import { addRecent } from "./lib/recents";
 import {
   EMPTY_QUERY,
   extractHighlightTerm,
@@ -33,7 +39,7 @@ import {
 const SEARCH_CAP = 1000;
 
 export function App() {
-  const { view, setView } = useView();
+  const { view, setView, split } = useView();
   const sessions = useSessions();
   // Lifted search state. `activeQuery` is null until SearchPanel commits a
   // query (Search click / history ◀▶▾); `useSearch` is called unconditionally
@@ -48,6 +54,29 @@ export function App() {
   // The first text-predicate's keyword, surfaced to VirtualLogView so matched
   // lines wrap the term in `<mark class="hit">`. "" for level/time-only queries.
   const highlightTerm = extractHighlightTerm(activeQuery);
+
+  // Task 6 (④a): open a saved workspace → load each of its files into the
+  // open-files registry. `useSessions.open` calls `openFile` (registering the
+  // session) and we bump recents for each, mirroring WelcomePage's open chain.
+  // Then restore the workspace's first saved query as the active query (so the
+  // lifted useSearch re-keys onto it — the user lands with the query armed),
+  // and flip to MainWindow. WorkspaceManager already `workspaceLoad`ed the ws
+  // before firing this callback, so we only fan out the open + restore here.
+  const handleOpenWorkspace = useCallback(
+    async (ws: Workspace) => {
+      for (const path of ws.files) {
+        await sessions.open(path); // → openFile + register in useSessions
+        addRecent(path); // bump recents (most-recent-first)
+      }
+      const firstQuery = Array.isArray(ws.queries) ? ws.queries[0] : undefined;
+      if (firstQuery) {
+        setActiveQuery(firstQuery as SearchRequest);
+      }
+      setView("main");
+    },
+    [sessions, setView],
+  );
+
   return (
     <AppShell>
       {view === "main" ? (
@@ -56,6 +85,13 @@ export function App() {
           search={search}
           setActiveQuery={setActiveQuery}
           highlightTerm={highlightTerm}
+          setView={setView}
+        />
+      ) : view === "split" ? (
+        <SplitView
+          sessions={sessions}
+          leftSessionId={split?.left ?? ""}
+          rightSessionId={split?.right ?? ""}
         />
       ) : view === "export" ? (
         <ExportDialog
@@ -67,6 +103,7 @@ export function App() {
         <WorkspaceManager
           sessions={sessions}
           activeQuery={activeQuery}
+          onOpenWorkspace={handleOpenWorkspace}
           onClose={() => setView("main")}
         />
       ) : (

@@ -104,6 +104,69 @@
   color: var(--scan);
 }
 
+/* Task 6 (④a): the Compare picker — a slim bar above the status footer with
+   two session selects (Left ⇄ Right) + a Compare confirm. Only renders when
+   the Compare toggle in the status bar is open + 2+ sessions exist. */
+.mw-compare {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.mw-compare-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.mw-compare-field select {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 18em;
+}
+.mw-compare-lbl {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.mw-compare-vs {
+  color: var(--text-faint);
+}
+.mw-compare-go {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--accent, var(--scan));
+  border: none;
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.mw-compare-go:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mw-compare-btn {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 10px;
+  cursor: pointer;
+}
+
 @media (max-width: 720px) {
   /* On narrow viewports, hide the sidebar tree so the log view gets room.
      (Tabs + search still work; the tree is a secondary navigator.) */
