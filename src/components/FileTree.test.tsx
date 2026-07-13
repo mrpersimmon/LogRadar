@@ -84,4 +84,20 @@ describe("FileTree", () => {
     render(<FileTree sessions={new Map()} activeId={null} onSelect={() => {}} />);
     expect(screen.getByText(/0 files/i)).toBeTruthy();
   });
+
+  it("groups Windows backslash paths into a tree (archive-extract regression)", () => {
+    // Regression: buildTree split on "/" only, so a Windows path
+    // (C:\extracted\foo\a.log) was treated as a single segment → the file
+    // rendered as a flat top-level row with the whole path as its name,
+    // not grouped under a `foo` directory node. Must split on both / and \.
+    const sessions = map(
+      session("s1", "C:\\extracted\\foo\\a.log", 8),
+      session("s2", "C:\\extracted\\foo\\b.log", 4),
+    );
+    render(<FileTree sessions={sessions} activeId="s1" onSelect={() => {}} />);
+
+    expect(screen.getByRole("treeitem", { name: "foo" })).toBeTruthy();
+    expect(screen.getByRole("treeitem", { name: "a.log" })).toBeTruthy();
+    expect(screen.getByRole("treeitem", { name: "b.log" })).toBeTruthy();
+  });
 });

@@ -46,7 +46,7 @@ type TreeNode = DirNode | FileNode;
 function buildTree(sessions: Map<string, SessionMeta>): DirNode {
   const root: DirNode = { kind: "dir", name: "", key: "", children: [], fileCount: 0 };
   for (const [id, meta] of sessions) {
-    const parts = meta.path.split("/").filter(Boolean);
+    const parts = meta.path.split(/[\\/]/).filter(Boolean);
     const filename = parts[parts.length - 1];
     const dirParts = parts.slice(0, -1);
     let cur = root;
